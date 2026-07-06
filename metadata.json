@@ -1,0 +1,5 @@
+{
+  "name": "Copy of SSLReverseProxy",
+  "description": "A modern, intuitive web interface for managing a high-performance reverse proxy server. Configure server routes, manage Let's Encrypt SSL certificates, and monitor server health with ease.",
+  "requestFramePermissions": []
+}

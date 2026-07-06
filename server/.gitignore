@@ -1,0 +1,15 @@
+# .NET build output
+bin/
+obj/
+*.user
+
+# Local SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# Generated proxy config
+proxy-config/
+
+# Local secrets (use user-secrets / environment instead)
+appsettings.*.local.json
