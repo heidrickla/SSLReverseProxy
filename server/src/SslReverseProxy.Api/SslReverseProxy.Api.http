@@ -1,0 +1,6 @@
+@SslReverseProxy.Api_HostAddress = http://localhost:5195
+
+GET {{SslReverseProxy.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

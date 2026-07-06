@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SslReverseProxy.Api/SslReverseProxy.Api.csproj" />
+    <Project Path="src/SslReverseProxy.Core/SslReverseProxy.Core.csproj" />
+    <Project Path="src/SslReverseProxy.Infrastructure/SslReverseProxy.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SslReverseProxy.Tests/SslReverseProxy.Tests.csproj" />
+  </Folder>
+</Solution>
