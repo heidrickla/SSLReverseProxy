@@ -7,26 +7,7 @@ import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import ProxyRuleModal from './ProxyRuleModal';
 import ConfirmationModal from './ConfirmationModal';
 import { useAuth } from '../contexts/AuthContext';
-
-const StatBar: React.FC<{ label: string; value: number }> = ({ label, value }) => {
-    const getBarColor = () => {
-        if (value > 90) return 'bg-danger';
-        if (value > 70) return 'bg-warning';
-        return 'bg-primary';
-    };
-
-    return (
-        <div>
-            <div className="flex justify-between items-center mb-1">
-                <span className="text-xs font-medium text-on-surface-muted">{label}</span>
-                <span className="text-xs font-semibold text-on-surface">{value}%</span>
-            </div>
-            <div className="w-full bg-surface-raised rounded-full h-1.5">
-                <div className={`${getBarColor()} h-1.5 rounded-full`} style={{ width: `${value}%` }}></div>
-            </div>
-        </div>
-    );
-};
+import { api } from '../services/apiClient';
 
 interface ServerDetailPaneProps {
   server: Server;
@@ -35,15 +16,9 @@ interface ServerDetailPaneProps {
   onDeleteServer: (serverId: string) => void;
 }
 
-const generateId = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2, 11);
-
 const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, onUpdateServer, onDeleteServer }) => {
   const { hasPermission } = useAuth();
   const canManageRules = hasPermission('rule:manage');
-  const canUpdate = hasPermission('server:update');
   const canDelete = hasPermission('server:delete');
   const rulesScrollRef = useHorizontalScroll();
   const [modalState, setModalState] = useState<{
@@ -52,32 +27,34 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
   }>({ isOpen: false, rule: null });
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
-  const handleToggleSSL = (ruleId: string, enabled: boolean) => {
-    const updatedRules = server.rules.map(r =>
-      r.id === ruleId ? { ...r, ssl: enabled } : r
-    );
-    onUpdateServer({ ...server, rules: updatedRules });
+  // Convert the UI rule shape to the API payload; new access-control fields keep
+  // their existing values (or default null) until the rule editor exposes them.
+  const toPayload = (domain: string, proxyTo: string, ssl: boolean) => ({
+    domain, upstreamUrl: proxyTo, enableTls: ssl, enabled: true,
+    allowedCidrs: null, deniedCidrs: null,
+  });
+
+  const handleToggleSSL = async (rule: ProxyRule, ssl: boolean) => {
+    await api.servers.rules.update(server.id, rule.id, toPayload(rule.domain, rule.proxyTo, ssl));
+    onUpdateServer(server); // triggers a reload of state from the API
   };
 
-  const handleSaveRule = (ruleData: { domain: string, proxyTo: string, ssl: boolean }) => {
-    let updatedRules;
-    if (modalState.rule) { // Editing
-      updatedRules = server.rules.map(r =>
-        r.id === modalState.rule!.id ? { ...modalState.rule!, ...ruleData } : r
-      );
-    } else { // Adding
-      const newRule: ProxyRule = { id: generateId(), ...ruleData };
-      updatedRules = [...server.rules, newRule];
+  const handleSaveRule = async (ruleData: { domain: string, proxyTo: string, ssl: boolean }) => {
+    const payload = toPayload(ruleData.domain, ruleData.proxyTo, ruleData.ssl);
+    if (modalState.rule) {
+      await api.servers.rules.update(server.id, modalState.rule.id, payload);
+    } else {
+      await api.servers.rules.create(server.id, payload);
     }
-    onUpdateServer({ ...server, rules: updatedRules });
     setModalState({ isOpen: false, rule: null });
+    onUpdateServer(server);
   };
 
-  const handleDeleteRule = (ruleId: string) => {
+  const handleDeleteRule = async (ruleId: string) => {
     if (window.confirm('Are you sure you want to delete this proxy rule?')) {
-      const updatedRules = server.rules.filter(r => r.id !== ruleId);
-      onUpdateServer({ ...server, rules: updatedRules });
+      await api.servers.rules.remove(server.id, ruleId);
       setModalState({ isOpen: false, rule: null });
+      onUpdateServer(server);
     }
   };
 
@@ -103,10 +80,10 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                     </button>
                 </div>
                 
-                <div className="space-y-4 mb-6">
-                    <StatBar label="CPU Usage" value={server.cpuUsage} />
-                    <StatBar label="RAM Usage" value={server.ramUsage} />
-                    <StatBar label="Storage" value={server.storageUsage} />
+                <div className="mb-6 text-sm text-on-surface-muted">
+                    <span className="font-medium text-on-surface">Host:</span> {server.host}
+                    <span className="mx-2">·</span>
+                    <span className="font-medium text-on-surface">OS:</span> {server.os}
                 </div>
 
                 <h4 className="text-lg font-semibold text-on-surface mb-4">Proxy Rules</h4>
@@ -122,7 +99,7 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                                 <p className="text-xs text-on-surface-muted">Proxy to: {rule.proxyTo}</p>
                            </div>
                            <div onClick={e => e.stopPropagation()}>
-                             <ToggleSwitch enabled={rule.ssl} onChange={(enabled) => handleToggleSSL(rule.id, enabled)} label="SSL" disabled={!canManageRules} />
+                             <ToggleSwitch enabled={rule.ssl} onChange={(enabled) => handleToggleSSL(rule, enabled)} label="SSL" disabled={!canManageRules} />
                            </div>
                         </div>
                     )) : (
@@ -138,10 +115,9 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                     </div>
                  )}
 
-                {(canUpdate || canDelete) && (
+                {canDelete && (
                     <div className="mt-auto pt-6 border-t border-border flex space-x-2 flex-shrink-0">
-                        {canUpdate && <Button variant="secondary" className="w-full">Restart Server</Button>}
-                        {canDelete && <Button variant="danger" className="w-full" onClick={() => setIsDeleteConfirmOpen(true)}>Delete Server</Button>}
+                        <Button variant="danger" className="w-full" onClick={() => setIsDeleteConfirmOpen(true)}>Delete Server</Button>
                     </div>
                 )}
             </div>

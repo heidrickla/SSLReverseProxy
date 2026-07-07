@@ -9,6 +9,7 @@ import { UserRole } from '../types';
 // authenticated session's real role. Never rely on this map for enforcement.
 
 export type Permission =
+  | 'proxy:control'
   | 'server:create'
   | 'server:update'
   | 'server:delete'
@@ -21,6 +22,7 @@ export type Permission =
 const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   Viewer: [],
   Editor: [
+    'proxy:control',
     'server:create',
     'server:update',
     'server:delete',
@@ -29,6 +31,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'cert:delete',
   ],
   Admin: [
+    'proxy:control',
     'server:create',
     'server:update',
     'server:delete',
