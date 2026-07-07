@@ -69,6 +69,15 @@ public class ProxyRule
     public string? AllowedCidrs { get; set; }
     public string? DeniedCidrs { get; set; }
 
+    // Per-route rate limit (requests/minute per client). Emitted for the
+    // caddy-ratelimit plugin; null disables it.
+    public int? RateLimitPerMinute { get; set; }
+
+    // Per-route HTTP basic auth (native Caddy). Only the bcrypt hash is stored;
+    // the plaintext password is never persisted.
+    public string? BasicAuthUsername { get; set; }
+    public string? BasicAuthPasswordHash { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

@@ -30,6 +30,12 @@ public sealed class SecurityOptions
     /// <summary>Allowed client-certificate thumbprints (SHA-256, hex) when mTLS is required.</summary>
     public string[] AllowedClientCertificateThumbprints { get; set; } = Array.Empty<string>();
     public string[] CorsAllowedOrigins { get; set; } = Array.Empty<string>();
+    /// <summary>
+    /// Reverse proxies whose X-Forwarded-* headers are trusted (IP or CIDR). Only
+    /// these sources may set the client IP the rate limiter and audit log record;
+    /// leaving it empty trusts only loopback.
+    /// </summary>
+    public string[] TrustedProxies { get; set; } = Array.Empty<string>();
 }
 
 /// <summary>

@@ -1,0 +1,31 @@
+# Runs the control-plane API (which manages Caddy as a child process) with a
+# persisted data volume. In production, terminate TLS for the control API at your
+# own edge or enable mutual TLS; the ports below expose the proxy (80/443) and the
+# control API (8080).
+
+services:
+  controlplane:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"     # proxy HTTP (ACME challenges)
+      - "443:443"   # proxy HTTPS
+      - "8080:8080" # control API — put this behind your own auth/mTLS edge
+    environment:
+      # Provide the pepper and any secrets via the host environment or a secrets
+      # manager — do not bake them into the image.
+      Security__ApiKeyPepper: "${SSLRP_API_KEY_PEPPER:?set SSLRP_API_KEY_PEPPER}"
+      Proxy__AcmeContactEmail: "${SSLRP_ACME_EMAIL:-}"
+      Security__CorsAllowedOrigins__0: "${SSLRP_SPA_ORIGIN:-}"
+    volumes:
+      - sslrp-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  sslrp-data:

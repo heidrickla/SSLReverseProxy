@@ -1,6 +1,8 @@
+using System.Net;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using SslReverseProxy.Api.Auth;
@@ -55,7 +57,7 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     if (securityOptions.CorsAllowedOrigins.Length > 0)
         p.WithOrigins(securityOptions.CorsAllowedOrigins)
             .WithHeaders("Authorization", ApiKeyDefaults.HeaderName, "Content-Type")
-            .WithMethods("GET", "POST", "PUT", "DELETE");
+            .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE");
     // With no configured origins the policy allows nothing cross-origin.
 }));
 
@@ -74,11 +76,43 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
+// Trust X-Forwarded-* only from configured proxies so the real client IP (used
+// by the rate limiter and audit log) can't be spoofed by clients.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownProxies.Clear();
+    o.KnownNetworks.Clear();
+    foreach (var proxy in securityOptions.TrustedProxies)
+    {
+        if (proxy.Contains('/'))
+        {
+            var parts = proxy.Split('/');
+            if (IPAddress.TryParse(parts[0], out var prefix) && int.TryParse(parts[1], out var len))
+                o.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(prefix, len));
+        }
+        else if (IPAddress.TryParse(proxy, out var ip))
+        {
+            o.KnownProxies.Add(ip);
+        }
+    }
+});
+
 builder.Services.AddProblemDetails();
 if (builder.Environment.IsDevelopment())
     builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+// Fail loudly in production if secret material is missing.
+if (app.Environment.IsProduction() && string.IsNullOrEmpty(securityOptions.ApiKeyPepper))
+{
+    app.Logger.LogWarning(
+        "Security:ApiKeyPepper is not set. Configure a random pepper via user-secrets or environment " +
+        "before exposing this service in production.");
+}
+
+app.UseForwardedHeaders();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
