@@ -61,6 +61,9 @@ export interface Metrics { collectedAt: string; available: boolean; totalRequest
 export interface Snapshot { id: number; createdAt: string; actor: string; ruleCount: number; note: string | null; }
 export interface UpstreamHealth { reachable: boolean; statusCode: number | null; latencyMs: number | null; error: string | null; }
 export interface CertStatus { id: string; domain: string; status: string; daysRemaining: number | null; expiresAt: string | null; }
+export interface ApiCertificate { id: string; domain: string; issuer: string; status: string; expiresAt: string | null; managed: boolean; }
+export interface ApiUser { id: string; name: string; email: string; role: string; isActive: boolean; lastSeenAt: string | null; }
+export interface ApiAuditEntry { id: number; timestamp: string; actor: string; action: string; targetType: string; targetName: string; success: boolean; sourceIp: string | null; }
 
 export const api = {
   whoami: () => request<WhoAmI>('GET', '/api/whoami'),
@@ -97,15 +100,25 @@ export const api = {
   },
 
   certificates: {
+    list: () => request<ApiCertificate[]>('GET', '/api/certificates'),
+    create: (c: { domain: string }) =>
+      request<ApiCertificate>('POST', '/api/certificates', { id: '00000000-0000-0000-0000-000000000000', domain: c.domain, issuer: '', status: 'Unknown', expiresAt: null, managed: true }),
+    remove: (id: string) => request<void>('DELETE', `/api/certificates/${id}`),
     status: (id: string) => request<CertStatus>('GET', `/api/certificates/${id}/status`),
     renew: (id: string) => request<unknown>('POST', `/api/certificates/${id}/renew`),
+  },
+
+  users: {
+    list: () => request<ApiUser[]>('GET', '/api/users'),
+    create: (u: { name: string; email: string; role: string }) => request<ApiUser>('POST', '/api/users', u),
+    update: (id: string, u: { name: string; role: string; isActive: boolean }) => request<ApiUser>('PUT', `/api/users/${id}`, u),
   },
 
   audit: (params?: { actor?: string; action?: string; targetType?: string; beforeId?: number; take?: number }) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params ?? {})) if (v != null) q.set(k, String(v));
     const qs = q.toString();
-    return request<unknown[]>('GET', `/api/audit${qs ? `?${qs}` : ''}`);
+    return request<ApiAuditEntry[]>('GET', `/api/audit${qs ? `?${qs}` : ''}`);
   },
 
   // Live event stream (SSE). Returns an EventSource-like reader via fetch.

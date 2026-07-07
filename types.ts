@@ -1,7 +1,7 @@
 import { Area } from 'react-easy-crop';
 import { Permission } from './utils/permissions';
 
-export type View = 'dashboard' | 'servers' | 'ssl' | 'users' | 'audit-log' | 'settings';
+export type View = 'dashboard' | 'proxy' | 'servers' | 'ssl' | 'users' | 'audit-log' | 'settings';
 
 export type ServerStatus = 'active' | 'inactive' | 'error';
 export type CertificateStatus = 'valid' | 'expiring' | 'expired' | 'issuing';
@@ -17,12 +17,9 @@ export interface ProxyRule {
 export interface Server {
   id: string;
   name: string;
-  ip: string;
+  host: string;
   os: 'linux' | 'windows';
-  status: ServerStatus;
-  cpuUsage: number;
-  ramUsage: number;
-  storageUsage: number;
+  ruleCount: number;
   rules: ProxyRule[];
 }
 
@@ -92,8 +89,9 @@ export interface CloudflareCredential {
 
 export interface AuthContextType {
   currentUser: User | null;
+  authReady: boolean;
   users: User[];
-  login: (userId: string) => void;
+  login: (apiKey: string) => Promise<void>;
   logout: () => void;
   switchUser: () => void;
   updateUser: (updatedUser: User) => void;

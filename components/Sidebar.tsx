@@ -10,6 +10,7 @@ import ChevronDoubleLeftIcon from './icons/ChevronDoubleLeftIcon';
 import ChevronDoubleRightIcon from './icons/ChevronDoubleRightIcon';
 import AvatarEditorModal from './AvatarEditorModal';
 import AuditLogIcon from './icons/AuditLogIcon';
+import ActiveConnectionsIcon from './icons/ActiveConnectionsIcon';
 
 interface SidebarProps {
   currentView: View;
@@ -81,6 +82,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, se
         </button>
         <nav className="flex-1 px-3 py-4 overflow-y-auto">
           <NavItem view="dashboard" label="Dashboard" icon={<DashboardIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="proxy" label="Proxy" icon={<ActiveConnectionsIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
           <NavItem view="servers" label="Servers" icon={<ServerIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
           <NavItem view="ssl" label="SSL" icon={<LockIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
           <NavItem view="users" label="Users" icon={<UsersIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />

@@ -64,14 +64,8 @@ const AddServerModal: React.FC<{
 
 
 const ServerRow: React.FC<{ server: Server; onSelect: (server: Server) => void; isSelected: boolean }> = ({ server, onSelect, isSelected }) => {
-    const statusClasses = {
-        active: 'bg-success',
-        inactive: 'bg-secondary',
-        error: 'bg-danger',
-    };
-
     return (
-        <tr 
+        <tr
             className={`cursor-pointer transition-colors duration-200 ${isSelected ? 'bg-primary/20' : 'hover:bg-surface-raised'}`}
             onClick={() => onSelect(server)}
         >
@@ -81,14 +75,8 @@ const ServerRow: React.FC<{ server: Server; onSelect: (server: Server) => void; 
                     {server.name}
                 </div>
             </td>
-            <td className="p-4 whitespace-nowrap text-on-surface-muted">{server.ip}</td>
-            <td className="p-4 whitespace-nowrap">
-                <div className="flex items-center">
-                    <div className={`w-3 h-3 rounded-full mr-2 ${statusClasses[server.status]}`}></div>
-                    <span className="text-on-surface">{server.status.charAt(0).toUpperCase() + server.status.slice(1)}</span>
-                </div>
-            </td>
-            <td className="p-4 whitespace-nowrap text-on-surface-muted">{server.rules.length}</td>
+            <td className="p-4 whitespace-nowrap text-on-surface-muted">{server.host}</td>
+            <td className="p-4 whitespace-nowrap text-on-surface-muted">{server.ruleCount}</td>
         </tr>
     );
 };
@@ -118,8 +106,7 @@ const Servers: React.FC = () => {
                         <thead className="bg-surface-raised sticky top-0">
                             <tr>
                                 <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Name</th>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">IP Address</th>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Status</th>
+                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Host</th>
                                 <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Rules</th>
                             </tr>
                         </thead>

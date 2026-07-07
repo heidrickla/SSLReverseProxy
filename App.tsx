@@ -5,6 +5,7 @@ import { View } from './types';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './views/Dashboard';
+import ProxyControl from './views/ProxyControl';
 import Servers from './views/Servers';
 import SSL from './views/SSL';
 import Users from './views/Users';
@@ -15,7 +16,7 @@ import { useHorizontalScroll } from './hooks/useHorizontalScroll';
 import AuditLog from './views/AuditLog';
 
 const AppContent: React.FC = () => {
-  const { currentUser, logout } = useAuth();
+  const { currentUser, authReady } = useAuth();
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     try {
@@ -37,6 +38,8 @@ const AppContent: React.FC = () => {
     switch (currentView) {
       case 'dashboard':
         return <Dashboard setView={setCurrentView} />;
+      case 'proxy':
+        return <ProxyControl />;
       case 'servers':
         return <Servers />;
       case 'ssl':
@@ -52,6 +55,11 @@ const AppContent: React.FC = () => {
     }
   };
   
+  // Avoid flashing the login screen while a stored key is being verified.
+  if (!authReady) {
+      return <div className="min-h-screen bg-background" />;
+  }
+
   if (!currentUser) {
       return <LoginView />;
   }
