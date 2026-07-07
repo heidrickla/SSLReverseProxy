@@ -87,6 +87,39 @@ public class CaddyConfigBuilderTests
         var json = CaddyConfigBuilder.Build(rules, _opts).ToJsonString();
         Assert.DoesNotContain("off.example.com", json);
     }
+
+    [Fact]
+    public void RateLimit_EmitsRateLimitHandler()
+    {
+        var rules = new[] { new ProxyRule { Domain = "a.example.com", UpstreamUrl = "http://10.0.0.5", Enabled = true, RateLimitPerMinute = 60 } };
+        var json = CaddyConfigBuilder.Build(rules, _opts).ToJsonString();
+        Assert.Contains("\"rate_limit\"", json);
+        Assert.Contains("\"events\":60", json.Replace(" ", ""));
+    }
+
+    [Fact]
+    public void BasicAuth_EmitsHttpBasicWithBcryptHash()
+    {
+        var hash = BCrypt.Net.BCrypt.HashPassword("s3cret");
+        var rules = new[] { new ProxyRule { Domain = "a.example.com", UpstreamUrl = "http://10.0.0.5", Enabled = true, BasicAuthUsername = "ops", BasicAuthPasswordHash = hash } };
+        var json = CaddyConfigBuilder.Build(rules, _opts).ToJsonString();
+        Assert.Contains("http_basic", json);
+        Assert.Contains("\"algorithm\":\"bcrypt\"", json.Replace(" ", ""));
+        Assert.Contains(hash, json);
+        Assert.DoesNotContain("s3cret", json); // plaintext never present
+    }
+}
+
+public class BasicAuthHashingTests
+{
+    [Fact]
+    public void Bcrypt_HashVerifies_AndIsNotPlaintext()
+    {
+        var hash = BCrypt.Net.BCrypt.HashPassword("correct horse");
+        Assert.NotEqual("correct horse", hash);
+        Assert.True(BCrypt.Net.BCrypt.Verify("correct horse", hash));
+        Assert.False(BCrypt.Net.BCrypt.Verify("wrong", hash));
+    }
 }
 
 public class UpstreamHealthCheckerTests

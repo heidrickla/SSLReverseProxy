@@ -78,8 +78,11 @@ Control service
 - `GET /api/proxy/snapshots`, `POST /api/proxy/rollback` — config history + one-call rollback.
 
 Servers / rules
-- `GET/POST/DELETE /api/servers`, `GET/POST/PUT/DELETE .../rules` — SSRF-validated; rules support
-  per-route IP allow/deny (`allowedCidrs`/`deniedCidrs`, native Caddy `remote_ip`).
+- `GET/POST/DELETE /api/servers`, `GET/POST/PUT/DELETE .../rules` — SSRF-validated. Per-route
+  access control: IP allow/deny (`allowedCidrs`/`deniedCidrs`, native Caddy `remote_ip`),
+  rate limiting (`rateLimitPerMinute`, caddy-ratelimit plugin), and HTTP basic auth
+  (`basicAuthUsername`/`basicAuthPassword` — hashed with bcrypt server-side; the plaintext is
+  never stored or returned).
 - `PATCH .../rules/{id}/enabled` — quick enable/disable toggle.
 - `GET .../rules/{id}/health` — probe the upstream (SSRF policy re-applied).
 
@@ -93,9 +96,25 @@ Users / keys / audit
 - `GET/POST /api/apikeys` (filter by `userId`), `POST /api/apikeys/{id}/{revoke|rotate}`.
 - `GET /api/audit` — audit trail with filtering (`actor`, `action`, `targetType`) and cursor paging (`beforeId`).
 
-> **Scope note:** per-route access control ships IP allow/deny (native Caddy). Route-level
-> rate limiting (needs the caddy-ratelimit plugin) and basic-auth (needs bcrypt credential
-> management) are natural next additions and were intentionally deferred.
+> **Note:** route-level **rate limiting** emits config for the [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit)
+> plugin, which must be present in the Caddy build (e.g. `xcaddy build --with github.com/mholt/caddy-ratelimit`).
+> **Basic auth** uses native Caddy and works with a stock build.
+
+## Production / deployment
+
+- **Secrets:** set `Security:ApiKeyPepper` (random, base64) via `Security__ApiKeyPepper` env
+  or user-secrets — the app logs a warning on startup in Production if it's unset. Provide
+  ACME email and any client-cert thumbprints the same way. Never commit them.
+- **TLS & headers:** HSTS + HTTPS redirect are enabled in Production; also terminate real TLS
+  (or mTLS) for the control API at your edge. Put the control API behind an authenticating
+  gateway or enable `Security:RequireMutualTls`.
+- **Behind a proxy:** list your reverse proxies in `Security:TrustedProxies` (IP or CIDR) so
+  the rate limiter and audit log record the real client IP from `X-Forwarded-For` — untrusted
+  sources are ignored to prevent spoofing.
+- **Containers:** [`Dockerfile`](Dockerfile) bundles the API with the Caddy binary (the API
+  manages Caddy as a child process); [`docker-compose.yml`](docker-compose.yml) runs it with a
+  persisted `/data` volume. Provide `SSLRP_API_KEY_PEPPER` (and optionally `SSLRP_ACME_EMAIL`,
+  `SSLRP_SPA_ORIGIN`) in the environment.
 
 ## Frontend
 

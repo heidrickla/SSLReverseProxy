@@ -22,6 +22,14 @@ public static class CaddyConfigBuilder
             foreach (var acl in BuildAccessControlHandlers(rule))
                 handle.Add(acl);
 
+            // Rate limit (caddy-ratelimit plugin) — requires the plugin in the build.
+            if (rule.RateLimitPerMinute is > 0)
+                handle.Add(BuildRateLimitHandler(rule.RateLimitPerMinute.Value));
+
+            // HTTP basic auth (native Caddy) using the stored bcrypt hash.
+            if (!string.IsNullOrEmpty(rule.BasicAuthUsername) && !string.IsNullOrEmpty(rule.BasicAuthPasswordHash))
+                handle.Add(BuildBasicAuthHandler(rule.BasicAuthUsername!, rule.BasicAuthPasswordHash!));
+
             handle.Add(new JsonObject
             {
                 ["handler"] = "reverse_proxy",
@@ -130,6 +138,45 @@ public static class CaddyConfigBuilder
                 {
                     new JsonObject { ["handler"] = "static_response", ["status_code"] = 403 },
                 },
+            },
+        },
+    };
+
+    // caddy-ratelimit plugin handler: N events per minute, keyed by client IP.
+    private static JsonObject BuildRateLimitHandler(int perMinute) => new()
+    {
+        ["handler"] = "rate_limit",
+        ["rate_limit"] = new JsonObject
+        {
+            ["zones"] = new JsonObject
+            {
+                ["per_route"] = new JsonObject
+                {
+                    ["key"] = "{http.request.remote_host}",
+                    ["events"] = perMinute,
+                    ["window"] = "1m",
+                },
+            },
+        },
+    };
+
+    // Native Caddy basic_auth handler using a bcrypt-hashed password.
+    private static JsonObject BuildBasicAuthHandler(string username, string bcryptHash) => new()
+    {
+        ["handler"] = "authentication",
+        ["providers"] = new JsonObject
+        {
+            ["http_basic"] = new JsonObject
+            {
+                ["accounts"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["username"] = username,
+                        ["password"] = bcryptHash,
+                    },
+                },
+                ["hash"] = new JsonObject { ["algorithm"] = "bcrypt" },
             },
         },
     };
