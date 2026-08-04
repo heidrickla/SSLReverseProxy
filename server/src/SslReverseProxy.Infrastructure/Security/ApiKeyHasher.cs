@@ -44,7 +44,6 @@ public sealed class ApiKeyHasher : IApiKeyHasher
         Buffer.BlockCopy(secretBytes, 0, input, 0, secretBytes.Length);
         Buffer.BlockCopy(_pepper, 0, input, secretBytes.Length, _pepper.Length);
 
-        using var pbkdf2 = new Rfc2898DeriveBytes(input, salt, iterations, HashAlgorithmName.SHA256);
-        return pbkdf2.GetBytes(HashSize);
+        return Rfc2898DeriveBytes.Pbkdf2(input, salt, iterations, HashAlgorithmName.SHA256, HashSize);
     }
 }
