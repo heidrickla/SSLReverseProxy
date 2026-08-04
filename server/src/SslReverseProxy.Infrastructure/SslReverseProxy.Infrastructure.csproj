@@ -17,7 +17,7 @@
     <!-- Runtime dependency of EF Sqlite: pin the patched native bundle. -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.0" />
     <!-- Design-time-only (pulled by EF Core Design's MSBuild tooling); kept private. -->
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.9" PrivateAssets="all" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" PrivateAssets="all" />
   </ItemGroup>
 
   <PropertyGroup>
