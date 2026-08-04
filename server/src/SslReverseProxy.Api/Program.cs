@@ -82,14 +82,13 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     o.KnownProxies.Clear();
-    o.KnownNetworks.Clear();
+    o.KnownIPNetworks.Clear();
     foreach (var proxy in securityOptions.TrustedProxies)
     {
         if (proxy.Contains('/'))
         {
-            var parts = proxy.Split('/');
-            if (IPAddress.TryParse(parts[0], out var prefix) && int.TryParse(parts[1], out var len))
-                o.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(prefix, len));
+            if (System.Net.IPNetwork.TryParse(proxy, out var network))
+                o.KnownIPNetworks.Add(network);
         }
         else if (IPAddress.TryParse(proxy, out var ip))
         {
