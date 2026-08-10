@@ -86,6 +86,7 @@ public static class ServerEndpoints
             db.Rules.Add(rule);
             await db.SaveChangesAsync(ctx.RequestAborted);
             await audit.AuditAsync(me, ctx, "Create Proxy Rule", "Proxy Rule", rule.Domain);
+            SetETag(ctx, rule.Version);
             return Results.Created($"/api/servers/{serverId}/rules/{rule.Id}", rule.ToDto());
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RuleWrite));
 
@@ -95,6 +96,12 @@ public static class ServerEndpoints
         {
             var rule = await db.Rules.FirstOrDefaultAsync(r => r.Id == ruleId && r.ServerId == serverId, ctx.RequestAborted);
             if (rule is null) return Results.NotFound();
+
+            // A full-replace PUT built from a stale copy silently reverts whatever
+            // the other writer changed, so the caller has to say which version it
+            // believes it is replacing.
+            if (CheckIfMatch(ctx, rule.Version, required: true) is { } precondition)
+                return precondition;
 
             var problem = ValidateRule(req.Domain, req.UpstreamUrl, validator, req.AllowedCidrs, req.DeniedCidrs,
                 req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening,
@@ -116,8 +123,16 @@ public static class ServerEndpoints
                 rule.BasicAuthPasswordHash = HashBasicAuth(req.BasicAuthUsername, req.BasicAuthPassword);
             ApplyHardening(rule, req.Hardening);
             rule.UpdatedAt = DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(ctx.RequestAborted);
+            rule.Version++;
+
+            if (await SaveOrConflictAsync(db, ctx) is { } conflict)
+            {
+                await audit.AuditAsync(me, ctx, "Update Proxy Rule", "Proxy Rule", rule.Domain,
+                    success: false, details: "Lost a concurrent update.");
+                return conflict;
+            }
             await audit.AuditAsync(me, ctx, "Update Proxy Rule", "Proxy Rule", rule.Domain);
+            SetETag(ctx, rule.Version);
             return Results.Ok(rule.ToDto());
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RuleWrite));
 
@@ -128,10 +143,19 @@ public static class ServerEndpoints
         {
             var rule = await db.Rules.FirstOrDefaultAsync(r => r.Id == ruleId && r.ServerId == serverId, ctx.RequestAborted);
             if (rule is null) return Results.NotFound();
+
+            // Optional here, unlike PUT: this writes one boolean rather than the
+            // whole rule, so losing a race costs an enable/disable rather than
+            // an operator's edits. Still enforced when it is supplied.
+            if (CheckIfMatch(ctx, rule.Version, required: false) is { } precondition)
+                return precondition;
+
             rule.Enabled = req.Enabled;
             rule.UpdatedAt = DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(ctx.RequestAborted);
+            rule.Version++;
+            if (await SaveOrConflictAsync(db, ctx) is { } conflict) return conflict;
             await audit.AuditAsync(me, ctx, req.Enabled ? "Enable Proxy Rule" : "Disable Proxy Rule", "Proxy Rule", rule.Domain);
+            SetETag(ctx, rule.Version);
             return Results.Ok(rule.ToDto());
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RuleWrite));
 
@@ -150,13 +174,85 @@ public static class ServerEndpoints
         {
             var rule = await db.Rules.FirstOrDefaultAsync(r => r.Id == ruleId && r.ServerId == serverId, ctx.RequestAborted);
             if (rule is null) return Results.NotFound();
+            if (CheckIfMatch(ctx, rule.Version, required: false) is { } precondition)
+                return precondition;
+
             db.Rules.Remove(rule);
-            await db.SaveChangesAsync(ctx.RequestAborted);
+            if (await SaveOrConflictAsync(db, ctx) is { } conflict) return conflict;
             await audit.AuditAsync(me, ctx, "Delete Proxy Rule", "Proxy Rule", rule.Domain);
             return Results.NoContent();
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RuleWrite));
 
         return app;
+    }
+
+    /// <summary>
+    /// Compares the caller's If-Match against the rule's current version.
+    /// Returns null to proceed, or the response to send instead.
+    /// <para>
+    /// 428 when it is required and absent, rather than quietly proceeding: a
+    /// caller that has not been told about preconditions is exactly the caller
+    /// whose blind overwrite this exists to prevent. 412 when it is present and
+    /// stale.
+    /// </para>
+    /// </summary>
+    private static IResult? CheckIfMatch(HttpContext ctx, int currentVersion, bool required)
+    {
+        var header = ctx.Request.Headers.IfMatch.ToString();
+
+        if (string.IsNullOrWhiteSpace(header))
+        {
+            return required
+                ? Results.Problem(
+                    title: "Precondition Required",
+                    detail: $"Send If-Match with the rule's current version (now \"{currentVersion}\") " +
+                            "so a concurrent edit is not silently overwritten.",
+                    statusCode: StatusCodes.Status428PreconditionRequired)
+                : null;
+        }
+
+        // "*" is RFC 7232's "any current representation", and the rule existing
+        // is already established by the time we reach here.
+        if (header.Trim() == "*") return null;
+
+        var matches = header
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(tag => tag.StartsWith("W/", StringComparison.Ordinal) ? tag[2..] : tag)
+            .Select(tag => tag.Trim('"'))
+            .Any(tag => int.TryParse(tag, out var v) && v == currentVersion);
+
+        return matches
+            ? null
+            : Results.Problem(
+                title: "Precondition Failed",
+                detail: $"The rule changed since you loaded it (now version \"{currentVersion}\"). " +
+                        "Reload it and reapply your changes.",
+                statusCode: StatusCodes.Status412PreconditionFailed);
+    }
+
+    private static void SetETag(HttpContext ctx, int version) =>
+        ctx.Response.Headers.ETag = $"\"{version}\"";
+
+    /// <summary>
+    /// Saves, turning a lost race into 409. The If-Match check narrows the
+    /// window but cannot close it: another writer can still land between our
+    /// read and our write, and only the database is in a position to notice.
+    /// </summary>
+    private static async Task<IResult?> SaveOrConflictAsync(AppDbContext db, HttpContext ctx)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ctx.RequestAborted);
+            return null;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Results.Problem(
+                title: "Conflict",
+                detail: "Another change to this rule landed while this one was being applied. " +
+                        "Reload it and reapply your changes.",
+                statusCode: StatusCodes.Status409Conflict);
+        }
     }
 
     private static IResult? ValidateRule(

@@ -39,9 +39,10 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
    *  - `basicAuthPassword`: write-only, and the API keeps the stored hash when a
    *    username arrives without a new password.
    *
-   * The values come from the last load of `server.rules`, so a change made
-   * elsewhere between that load and this write would be overwritten — the same
-   * last-write-wins the endpoint already has, not something new here.
+   * The values come from the last load of `server.rules`. If someone else has
+   * written the rule since then, the `If-Match` sent alongside this body no
+   * longer matches and the API rejects the write instead of letting it revert
+   * their change.
    */
   const toPayload = (rule: Rule, changes: Partial<RuleInput>): RuleInput => ({
     domain: rule.domain,
@@ -56,13 +57,14 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
   });
 
   const handleToggleSSL = async (rule: Rule, enableTls: boolean) => {
-    await api.servers.rules.update(server.id, rule.id, toPayload(rule, { enableTls }));
+    await api.servers.rules.update(server.id, rule.id, toPayload(rule, { enableTls }), rule.version);
     onUpdateServer(server); // triggers a reload of state from the API
   };
 
   const handleSaveRule = async (ruleData: ProxyRuleFormData) => {
     if (modalState.rule) {
-      await api.servers.rules.update(server.id, modalState.rule.id, toPayload(modalState.rule, ruleData));
+      await api.servers.rules.update(
+        server.id, modalState.rule.id, toPayload(modalState.rule, ruleData), modalState.rule.version);
     } else {
       await api.servers.rules.create(server.id, { ...ruleData, enabled: true });
     }

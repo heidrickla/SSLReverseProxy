@@ -298,6 +298,10 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.Property<int?>("UpstreamWriteTimeoutSeconds")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("Domain");

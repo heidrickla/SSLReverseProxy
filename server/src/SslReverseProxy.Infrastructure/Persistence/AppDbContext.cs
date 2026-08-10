@@ -55,6 +55,12 @@ public class AppDbContext : DbContext
             e.Property(r => r.HealthCheckPath).HasMaxLength(2048);
             e.Property(r => r.UpstreamTlsServerName).HasMaxLength(253);
             e.Property(r => r.UpstreamTlsTrustedCaFile).HasMaxLength(4096);
+            // EF puts the ORIGINAL value in the UPDATE's WHERE clause, so a row
+            // someone else has written since we loaded it matches nothing and
+            // SaveChanges raises DbUpdateConcurrencyException instead of
+            // overwriting. SQLite has no native rowversion, hence a plain int
+            // the endpoints increment.
+            e.Property(r => r.Version).IsConcurrencyToken();
             e.HasIndex(r => r.Domain);
         });
 

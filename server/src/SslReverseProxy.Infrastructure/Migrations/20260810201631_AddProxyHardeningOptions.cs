@@ -135,6 +135,13 @@ namespace SslReverseProxy.Infrastructure.Migrations
                 table: "Rules",
                 type: "INTEGER",
                 nullable: true);
+
+            migrationBuilder.AddColumn<int>(
+                name: "Version",
+                table: "Rules",
+                type: "INTEGER",
+                nullable: false,
+                defaultValue: 0);
         }
 
         /// <inheritdoc />
@@ -210,6 +217,10 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
             migrationBuilder.DropColumn(
                 name: "UpstreamWriteTimeoutSeconds",
+                table: "Rules");
+
+            migrationBuilder.DropColumn(
+                name: "Version",
                 table: "Rules");
         }
     }
