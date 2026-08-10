@@ -51,9 +51,50 @@ export interface ProxyStatus {
   startedAt: string | null; activeRuleCount: number; message: string | null;
 }
 export interface Server { id: string; name: string; host: string; os: string; ruleCount: number; }
+// Per-route hardening emitted into the Caddy config. Mirrors RuleHardeningDto.
+export interface RuleHardening {
+  additionalUpstreams: string | null;
+  loadBalancePolicy: string | null;
+  dialTimeoutSeconds: number | null;
+  upstreamReadTimeoutSeconds: number | null;
+  upstreamWriteTimeoutSeconds: number | null;
+  maxRequestBodyBytes: number | null;
+  enableSecurityHeaders: boolean;
+  hstsMaxAgeDays: number | null;
+  hstsIncludeSubdomains: boolean;
+  frameOptions: string | null;
+  healthCheckPath: string | null;
+  healthCheckIntervalSeconds: number | null;
+  healthCheckTimeoutSeconds: number | null;
+  healthCheckExpectStatus: number | null;
+  skipAccessLog: boolean;
+}
 export interface Rule {
   id: string; serverId: string; domain: string; upstreamUrl: string;
   enableTls: boolean; enabled: boolean; allowedCidrs: string | null; deniedCidrs: string | null;
+  rateLimitPerMinute: number | null;
+  basicAuthEnabled: boolean; basicAuthUsername: string | null;
+  hardening: RuleHardening;
+}
+/**
+ * Body for creating/updating a rule. Not Omit<Rule, ...>: the write shape and
+ * the read shape genuinely differ — basicAuthPassword is write-only, and
+ * basicAuthEnabled is derived server-side.
+ *
+ * PUT replaces, so every field left out is cleared. `hardening` is all-or-
+ * nothing on the same principle: omit it entirely and those settings are left
+ * alone, but send one and every field in it is written, so a field you leave
+ * out is cleared rather than kept. That is why this is `RuleHardening` and not
+ * `Partial<RuleHardening>` — a partial-looking type would make
+ * `hardening: { skipAccessLog: true }` type-check while silently dropping the
+ * rule's upstreams, timeouts and health check.
+ */
+export interface RuleInput {
+  domain: string; upstreamUrl: string; enableTls: boolean; enabled: boolean;
+  allowedCidrs?: string | null; deniedCidrs?: string | null;
+  rateLimitPerMinute?: number | null;
+  basicAuthUsername?: string | null; basicAuthPassword?: string | null;
+  hardening?: RuleHardening | null;
 }
 export interface WhoAmI { userId: string | null; name: string; role: string; permissions: string[]; }
 export interface ProxyValidation { valid: boolean; issues: string[]; engineValidated: boolean; }
@@ -67,6 +108,11 @@ export interface ApiAuditEntry { id: number; timestamp: string; actor: string; a
 
 export const api = {
   whoami: () => request<WhoAmI>('GET', '/api/whoami'),
+
+  // First-run only: claims the seeded bootstrap admin key. The backend answers
+  // solely in Development, from loopback, until the key is claimed once; every
+  // other case is a 404.
+  bootstrapKey: () => request<{ apiKey: string }>('GET', '/api/bootstrap-key'),
 
   proxy: {
     status: () => request<ProxyStatus>('GET', '/api/proxy/status'),
@@ -86,9 +132,9 @@ export const api = {
     remove: (id: string) => request<void>('DELETE', `/api/servers/${id}`),
     rules: {
       list: (serverId: string) => request<Rule[]>('GET', `/api/servers/${serverId}/rules`),
-      create: (serverId: string, r: Omit<Rule, 'id' | 'serverId'>) =>
+      create: (serverId: string, r: RuleInput) =>
         request<Rule>('POST', `/api/servers/${serverId}/rules`, r),
-      update: (serverId: string, ruleId: string, r: Omit<Rule, 'id' | 'serverId'>) =>
+      update: (serverId: string, ruleId: string, r: RuleInput) =>
         request<Rule>('PUT', `/api/servers/${serverId}/rules/${ruleId}`, r),
       toggle: (serverId: string, ruleId: string, enabled: boolean) =>
         request<Rule>('PATCH', `/api/servers/${serverId}/rules/${ruleId}/enabled`, { enabled }),

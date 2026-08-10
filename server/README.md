@@ -41,6 +41,19 @@ use a mature, audited implementation instead of hand-rolled crypto.
 - `Security:CorsAllowedOrigins` — SPA origin(s); empty = no cross-origin access.
 - `Proxy:CaddyPath`, `Proxy:AdminEndpoint` (loopback), `Proxy:AcmeContactEmail`, `Proxy:UseAcmeStaging`.
 - `Proxy:AllowLoopbackUpstreams`, `Proxy:AllowPrivateUpstreams` — SSRF policy.
+- `Proxy:TrustedProxyCidrs` — CIDRs of any L7 proxy in front of **Caddy**. Empty (the default)
+  means `X-Forwarded-For` is ignored outright, which is correct when Caddy faces clients
+  directly and is what makes the per-route IP lists unspoofable. Not to be confused with
+  `Security:TrustedProxies`, which is the same idea for the **control API**.
+- `Proxy:TlsMinVersion` (`tls1.2` / `tls1.3`) and `Proxy:TlsCipherSuites` — the data-plane TLS
+  floor. Caddy accepts only those two version strings and quietly ignores anything else, so an
+  unrecognised value is treated as `tls1.2`. A cipher name Caddy does not know fails the entire
+  config load, so run `POST /api/proxy/validate` after changing the suite list.
+- `Proxy:ReadHeaderTimeoutSeconds`, `Proxy:ReadTimeoutSeconds`, `Proxy:WriteTimeoutSeconds`,
+  `Proxy:IdleTimeoutSeconds` — data-plane timeouts; `0` keeps Caddy's default, which for
+  read/write is no timeout at all.
+- `Proxy:AccessLogPath` (+ `AccessLogRollSizeMb`, `AccessLogKeepDays`) — writes the data-plane
+  access log as JSON lines. Off by default: these records carry client IPs and request URLs.
 
 Set secrets locally without committing them:
 
@@ -58,15 +71,31 @@ dotnet test
 dotnet run --project src/SslReverseProxy.Api
 ```
 
+`CaddyBinaryValidationTests` puts the generated config permutations through a real
+`caddy validate`, which catches a key that is spelled correctly but does not belong where it was
+emitted — something assertions on the JSON alone cannot. It runs whenever `caddy` is on `PATH`,
+or point it at a binary explicitly; without one it no-ops so the suite still runs on a box with
+no Caddy installed.
+
+```bash
+SSLRP_TEST_CADDY=/path/to/caddy dotnet test
+```
+
 On first run the database is created/migrated and a **bootstrap admin + one-time
 API key** are seeded; the plaintext key is written to the log **once** — capture
 it. Use it as `X-Api-Key` to create real users/keys, then stop using the
 bootstrap key.
 
-## Endpoints (all require auth except `/api/health` and `/api/ready`)
+In **Development only**, the seeded key can instead be claimed once via
+`GET /api/bootstrap-key` (loopback clients only, and only while the process that
+seeded the database is still running) — the React dev UI does this automatically
+on first load, so a fresh install signs in without touching the log.
+
+## Endpoints (all require auth except `/api/health`, `/api/ready`, and `/api/bootstrap-key`)
 
 Meta
 - `GET /api/health` — anonymous liveness. `GET /api/ready` — anonymous readiness (DB + proxy).
+- `GET /api/bootstrap-key` — one-time first-run key claim (Development + loopback only; otherwise 404).
 - `GET /api/whoami` — current principal + permissions.
 - `GET /api/events` — Server-Sent Events stream of control-plane events.
 
@@ -79,10 +108,23 @@ Control service
 
 Servers / rules
 - `GET/POST/DELETE /api/servers`, `GET/POST/PUT/DELETE .../rules` — SSRF-validated. Per-route
-  access control: IP allow/deny (`allowedCidrs`/`deniedCidrs`, native Caddy `remote_ip`),
+  access control: IP allow/deny (`allowedCidrs`/`deniedCidrs`, native Caddy `client_ip`),
   rate limiting (`rateLimitPerMinute`, caddy-ratelimit plugin), and HTTP basic auth
   (`basicAuthUsername`/`basicAuthPassword` — hashed with bcrypt server-side; the plaintext is
   never stored or returned).
+- Rules also take an optional `hardening` object. Omit it and nothing changes, which is what
+  keeps older clients working; send it and every field in it is replaced, matching how the rest
+  of `PUT` behaves.
+
+  | Field | Effect |
+  | --- | --- |
+  | `additionalUpstreams`, `loadBalancePolicy` | Extra upstreams (same SSRF policy, and all must share the primary's scheme) plus a Caddy selection policy: `random`, `random_choose`, `first`, `round_robin`, `least_conn`, `ip_hash`, `uri_hash`, `client_ip_hash`. |
+  | `dialTimeoutSeconds`, `upstreamReadTimeoutSeconds`, `upstreamWriteTimeoutSeconds` | Bounds on the upstream leg. Caddy ships no read/write timeout, so a backend that stalls mid-response otherwise holds the connection open indefinitely. |
+  | `maxRequestBodyBytes` | Caps the request body; the client gets `413`. Enforced as the body is read, not from `Content-Length`, so an oversized upload is cut off partway rather than refused up front. |
+  | `enableSecurityHeaders` | On by default; emits `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`. |
+  | `hstsMaxAgeDays`, `hstsIncludeSubdomains`, `frameOptions` | Opt-in, and off by default because both can break a working site. HSTS cannot be recalled once a browser has seen it, and is suppressed on rules with TLS disabled. `includeSubDomains` is a separate opt-in again: on an apex domain it pins every sibling host to HTTPS for the whole max-age, including hosts this rule does not serve. |
+  | `healthCheckPath`, `healthCheckIntervalSeconds`, `healthCheckTimeoutSeconds`, `healthCheckExpectStatus` | Caddy-native active health checking, so an unhealthy upstream is taken out of rotation between requests rather than only being visible in the control plane's own probe. `expectStatus` accepts a full code or a single digit for the whole class (`2` = any 2xx); left unset, Caddy's own 200-399 applies, which is what you want for a health endpoint that redirects. |
+  | `skipAccessLog` | Keeps this host out of the access log. |
 - `PATCH .../rules/{id}/enabled` — quick enable/disable toggle.
 - `GET .../rules/{id}/health` — probe the upstream (SSRF policy re-applied).
 
@@ -99,6 +141,16 @@ Users / keys / audit
 > **Note:** route-level **rate limiting** emits config for the [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit)
 > plugin, which must be present in the Caddy build (e.g. `xcaddy build --with github.com/mholt/caddy-ratelimit`).
 > **Basic auth** uses native Caddy and works with a stock build.
+>
+> **Caddy version floor: 2.7.** The IP allow/deny lists emit the `client_ip` matcher, which
+> does not exist before 2.7 — on an older build the config is rejected outright rather than
+> silently ignored, since Caddy rejects unknown fields.
+>
+> **`https://` upstreams:** Caddy's JSON has no scheme inference — the `dial` address is only
+> `host:port`, and it is the reverse-proxy transport that decides TLS. The generated config sets
+> that transport, so an `https://` upstream is now actually spoken to over TLS. On Caddy 2.11+
+> the transport also rewrites the `Host` header to the upstream's `host:port`; if your backend
+> serves virtual hosts keyed on the original `Host`, account for that.
 
 ## Production / deployment
 
