@@ -13,20 +13,16 @@ const mapCertStatus = (s: string): CertificateStatus => {
     }
 };
 
-const toRule = (r: ApiRule): Server['rules'][number] => ({
-    id: r.id,
-    domain: r.domain,
-    proxyTo: r.upstreamUrl,
-    ssl: r.enableTls,
-});
-
+// Rules are carried through untouched: the detail pane has to echo every field
+// back on update, so narrowing them here would silently drop access control,
+// rate limits and basic auth on the next write.
 const toServer = (s: ApiServer, rules: ApiRule[]): Server => ({
     id: s.id,
     name: s.name,
     host: s.host,
     os: (s.os === 'windows' ? 'windows' : 'linux'),
     ruleCount: s.ruleCount,
-    rules: rules.map(toRule),
+    rules,
 });
 
 /**

@@ -1,5 +1,6 @@
 import { Area } from 'react-easy-crop';
 import { Permission } from './utils/permissions';
+import type { Rule } from './services/apiClient';
 
 export type View = 'dashboard' | 'proxy' | 'servers' | 'ssl' | 'users' | 'audit-log' | 'settings';
 
@@ -7,20 +8,16 @@ export type ServerStatus = 'active' | 'inactive' | 'error';
 export type CertificateStatus = 'valid' | 'expiring' | 'expired' | 'issuing';
 export type UserRole = 'Admin' | 'Editor' | 'Viewer';
 
-export interface ProxyRule {
-  id: string;
-  domain: string;
-  proxyTo: string;
-  ssl: boolean;
-}
-
 export interface Server {
   id: string;
   name: string;
   host: string;
   os: 'linux' | 'windows';
   ruleCount: number;
-  rules: ProxyRule[];
+  // The API rule verbatim, not a trimmed-down view shape. Rule writes are
+  // full replacements, so anything dropped here would be dropped on the next
+  // PUT — see toPayload in components/ServerDetailPane.tsx.
+  rules: Rule[];
 }
 
 export interface Certificate {
