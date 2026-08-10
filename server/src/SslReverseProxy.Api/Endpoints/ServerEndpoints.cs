@@ -65,7 +65,8 @@ public static class ServerEndpoints
                 return Results.NotFound();
 
             var problem = ValidateRule(req.Domain, req.UpstreamUrl, validator, req.AllowedCidrs, req.DeniedCidrs,
-                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, isCreate: true);
+                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening,
+                existingAdditionalUpstreams: null, isCreate: true);
             if (problem is not null) return problem;
 
             var rule = new ProxyRule
@@ -75,12 +76,13 @@ public static class ServerEndpoints
                 UpstreamUrl = req.UpstreamUrl.Trim(),
                 EnableTls = req.EnableTls,
                 Enabled = req.Enabled,
-                AllowedCidrs = NormalizeCidrs(req.AllowedCidrs),
-                DeniedCidrs = NormalizeCidrs(req.DeniedCidrs),
+                AllowedCidrs = NormalizeCsv(req.AllowedCidrs),
+                DeniedCidrs = NormalizeCsv(req.DeniedCidrs),
                 RateLimitPerMinute = req.RateLimitPerMinute is > 0 ? req.RateLimitPerMinute : null,
                 BasicAuthUsername = string.IsNullOrWhiteSpace(req.BasicAuthUsername) ? null : req.BasicAuthUsername.Trim(),
                 BasicAuthPasswordHash = HashBasicAuth(req.BasicAuthUsername, req.BasicAuthPassword),
             };
+            ApplyHardening(rule, req.Hardening);
             db.Rules.Add(rule);
             await db.SaveChangesAsync(ctx.RequestAborted);
             await audit.AuditAsync(me, ctx, "Create Proxy Rule", "Proxy Rule", rule.Domain);
@@ -95,15 +97,16 @@ public static class ServerEndpoints
             if (rule is null) return Results.NotFound();
 
             var problem = ValidateRule(req.Domain, req.UpstreamUrl, validator, req.AllowedCidrs, req.DeniedCidrs,
-                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, isCreate: false);
+                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening,
+                existingAdditionalUpstreams: rule.AdditionalUpstreams, isCreate: false);
             if (problem is not null) return problem;
 
             rule.Domain = req.Domain.Trim();
             rule.UpstreamUrl = req.UpstreamUrl.Trim();
             rule.EnableTls = req.EnableTls;
             rule.Enabled = req.Enabled;
-            rule.AllowedCidrs = NormalizeCidrs(req.AllowedCidrs);
-            rule.DeniedCidrs = NormalizeCidrs(req.DeniedCidrs);
+            rule.AllowedCidrs = NormalizeCsv(req.AllowedCidrs);
+            rule.DeniedCidrs = NormalizeCsv(req.DeniedCidrs);
             rule.RateLimitPerMinute = req.RateLimitPerMinute is > 0 ? req.RateLimitPerMinute : null;
             rule.BasicAuthUsername = string.IsNullOrWhiteSpace(req.BasicAuthUsername) ? null : req.BasicAuthUsername.Trim();
             // Only re-hash when a new password is supplied; blank username clears auth.
@@ -111,6 +114,7 @@ public static class ServerEndpoints
                 rule.BasicAuthPasswordHash = null;
             else if (!string.IsNullOrEmpty(req.BasicAuthPassword))
                 rule.BasicAuthPasswordHash = HashBasicAuth(req.BasicAuthUsername, req.BasicAuthPassword);
+            ApplyHardening(rule, req.Hardening);
             rule.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ctx.RequestAborted);
             await audit.AuditAsync(me, ctx, "Update Proxy Rule", "Proxy Rule", rule.Domain);
@@ -158,7 +162,8 @@ public static class ServerEndpoints
     private static IResult? ValidateRule(
         string domain, string upstream, ProxyTargetValidator validator,
         string? allowedCidrs, string? deniedCidrs,
-        int? rateLimitPerMinute, string? basicAuthUsername, string? basicAuthPassword, bool isCreate)
+        int? rateLimitPerMinute, string? basicAuthUsername, string? basicAuthPassword,
+        RuleHardeningRequest? hardening, string? existingAdditionalUpstreams, bool isCreate)
     {
         var errors = new Dictionary<string, string[]>();
         var d = validator.ValidateDomain(domain);
@@ -172,7 +177,154 @@ public static class ServerEndpoints
         // On create, a basic-auth username requires a password (nothing to keep).
         if (isCreate && !string.IsNullOrWhiteSpace(basicAuthUsername) && string.IsNullOrEmpty(basicAuthPassword))
             errors["basicAuthPassword"] = ["A password is required when a basic-auth username is set."];
+        ValidateHardening(hardening, upstream, validator, errors);
+
+        // Checked against the upstreams the rule will actually END UP with, not
+        // just the ones in this request. On an update that changes only
+        // upstreamUrl and omits `hardening`, the stored additional upstreams
+        // survive untouched — so validating the request alone would let the
+        // primary's scheme drift away from them and leave a mixed-scheme rule.
+        // Caddy picks TLS-to-the-backend on the transport, which every upstream
+        // in the handler shares. Because one https member turns TLS on for the
+        // whole set, a mixed rule always fails the safe way — TLS offered to a
+        // plaintext port, so those backends just fail the handshake — never the
+        // other way round. That is an availability bug, not a downgrade: the
+        // edit returns 200 and then a share of traffic 502s.
+        var effectiveExtras = hardening is not null
+            ? hardening.AdditionalUpstreams
+            : existingAdditionalUpstreams;
+        if (!string.IsNullOrWhiteSpace(effectiveExtras) &&
+            !errors.ContainsKey("hardening.additionalUpstreams") &&
+            SchemesDiffer(upstream, SplitCsv(effectiveExtras)))
+        {
+            errors["hardening.additionalUpstreams"] =
+                ["All upstreams for a rule must use the same scheme as the primary upstream."];
+        }
+
         return errors.Count > 0 ? Results.ValidationProblem(errors) : null;
+    }
+
+    // Caddy's built-in upstream selection policies that need no extra config.
+    private static readonly HashSet<string> LoadBalancePolicies = new(StringComparer.OrdinalIgnoreCase)
+        { "random", "random_choose", "first", "round_robin", "least_conn", "ip_hash", "uri_hash", "client_ip_hash" };
+
+    private static void ValidateHardening(
+        RuleHardeningRequest? h, string primaryUpstream, ProxyTargetValidator validator,
+        Dictionary<string, string[]> errors)
+    {
+        if (h is null) return;
+
+        // Every extra upstream is a proxy target like any other, so it goes
+        // through the same SSRF policy as the primary. Skipping this would make
+        // the additional-upstreams field a way around ValidateUpstream.
+        if (!string.IsNullOrWhiteSpace(h.AdditionalUpstreams))
+        {
+            var bad = new List<string>();
+            foreach (var entry in SplitCsv(h.AdditionalUpstreams))
+            {
+                var check = validator.ValidateUpstream(entry);
+                if (!check.Ok) bad.Add($"'{entry}': {check.Reason}");
+            }
+            if (bad.Count > 0) errors["hardening.additionalUpstreams"] = [.. bad];
+        }
+
+        if (!string.IsNullOrWhiteSpace(h.LoadBalancePolicy) && !LoadBalancePolicies.Contains(h.LoadBalancePolicy))
+            errors["hardening.loadBalancePolicy"] =
+                [$"Unsupported policy. Use one of: {string.Join(", ", LoadBalancePolicies.Order())}."];
+
+        // Upper bounds are sanity rails, not policy: they stop a typo like
+        // "3000" seconds from silently becoming a 50-minute upstream timeout.
+        AddIfOutOfRange(errors, "hardening.dialTimeoutSeconds", h.DialTimeoutSeconds, 1, 600);
+        AddIfOutOfRange(errors, "hardening.upstreamReadTimeoutSeconds", h.UpstreamReadTimeoutSeconds, 1, 3600);
+        AddIfOutOfRange(errors, "hardening.upstreamWriteTimeoutSeconds", h.UpstreamWriteTimeoutSeconds, 1, 3600);
+        AddIfOutOfRange(errors, "hardening.hstsMaxAgeDays", h.HstsMaxAgeDays, 1, 730);
+        AddIfOutOfRange(errors, "hardening.healthCheckIntervalSeconds", h.HealthCheckIntervalSeconds, 1, 86400);
+        AddIfOutOfRange(errors, "hardening.healthCheckTimeoutSeconds", h.HealthCheckTimeoutSeconds, 1, 300);
+
+        if (h.MaxRequestBodyBytes is < 1 or > 68_719_476_736)
+            errors["hardening.maxRequestBodyBytes"] = ["Must be between 1 byte and 64 GiB."];
+
+        if (h.FrameOptions is { } fo && !string.IsNullOrWhiteSpace(fo) &&
+            !fo.Equals("DENY", StringComparison.OrdinalIgnoreCase) &&
+            !fo.Equals("SAMEORIGIN", StringComparison.OrdinalIgnoreCase))
+            errors["hardening.frameOptions"] = ["Must be DENY or SAMEORIGIN."];
+
+        if (!string.IsNullOrWhiteSpace(h.HealthCheckPath) && !h.HealthCheckPath.StartsWith('/'))
+            errors["hardening.healthCheckPath"] = ["Must be a path starting with '/'."];
+
+        // Caddy accepts either a full status code or a single leading digit
+        // standing for the whole class, so 2 means "any 2xx".
+        if (h.HealthCheckExpectStatus is { } es && es is not (>= 1 and <= 5) && es is not (>= 100 and <= 599))
+            errors["hardening.healthCheckExpectStatus"] =
+                ["Must be a status code (100-599) or a single digit for a status class (1-5)."];
+
+        // Compared against the interval that will actually apply. Guarding only
+        // when both are supplied let a 300s timeout through against Caddy's 30s
+        // default interval, so every check would still be in flight when the
+        // next one started.
+        if (h.HealthCheckTimeoutSeconds is { } to)
+        {
+            var effectiveInterval = h.HealthCheckIntervalSeconds ?? DefaultHealthCheckIntervalSeconds;
+            if (to > effectiveInterval)
+                errors["hardening.healthCheckTimeoutSeconds"] =
+                    [$"Timeout must not exceed the check interval ({effectiveInterval}s), or checks overlap."];
+        }
+    }
+
+    /// <summary>Caddy's own default active health-check interval.</summary>
+    private const int DefaultHealthCheckIntervalSeconds = 30;
+
+    private static void AddIfOutOfRange(
+        Dictionary<string, string[]> errors, string key, int? value, int min, int max)
+    {
+        if (value is not null && (value < min || value > max))
+            errors[key] = [$"Must be between {min} and {max}."];
+    }
+
+    /// <summary>
+    /// Copies a supplied hardening block onto the rule. A null block leaves the
+    /// rule untouched, so clients that predate these settings keep working; a
+    /// supplied block replaces every field, so a null inside it clears that
+    /// setting — matching the replace semantics the rest of PUT already has.
+    /// </summary>
+    private static void ApplyHardening(ProxyRule rule, RuleHardeningRequest? h)
+    {
+        if (h is null) return;
+
+        rule.AdditionalUpstreams = NormalizeCsv(h.AdditionalUpstreams);
+        rule.LoadBalancePolicy = string.IsNullOrWhiteSpace(h.LoadBalancePolicy)
+            ? null : h.LoadBalancePolicy.Trim().ToLowerInvariant();
+        rule.DialTimeoutSeconds = h.DialTimeoutSeconds;
+        rule.UpstreamReadTimeoutSeconds = h.UpstreamReadTimeoutSeconds;
+        rule.UpstreamWriteTimeoutSeconds = h.UpstreamWriteTimeoutSeconds;
+        rule.MaxRequestBodyBytes = h.MaxRequestBodyBytes;
+        rule.EnableSecurityHeaders = h.EnableSecurityHeaders ?? true;
+        rule.HstsMaxAgeDays = h.HstsMaxAgeDays;
+        rule.HstsIncludeSubdomains = h.HstsIncludeSubdomains ?? false;
+        rule.FrameOptions = string.IsNullOrWhiteSpace(h.FrameOptions)
+            ? null : h.FrameOptions.Trim().ToUpperInvariant();
+        rule.HealthCheckPath = string.IsNullOrWhiteSpace(h.HealthCheckPath) ? null : h.HealthCheckPath.Trim();
+        rule.HealthCheckIntervalSeconds = h.HealthCheckIntervalSeconds;
+        rule.HealthCheckTimeoutSeconds = h.HealthCheckTimeoutSeconds;
+        rule.HealthCheckExpectStatus = h.HealthCheckExpectStatus;
+        rule.SkipAccessLog = h.SkipAccessLog ?? false;
+    }
+
+    private static bool SchemesDiffer(string primary, IEnumerable<string> others)
+    {
+        if (!Uri.TryCreate(primary, UriKind.Absolute, out var p)) return false;
+        return others.Any(o => Uri.TryCreate(o, UriKind.Absolute, out var u) &&
+                               !string.Equals(u.Scheme, p.Scheme, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IEnumerable<string> SplitCsv(string csv) =>
+        csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string? NormalizeCsv(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return null;
+        var parts = SplitCsv(csv).ToArray();
+        return parts.Length == 0 ? null : string.Join(",", parts);
     }
 
     // Returns an error message if any entry is not a valid IP or CIDR, else null.
@@ -189,13 +341,6 @@ public static class ServerEndpoints
                 return $"'{entry}' has an invalid CIDR prefix length.";
         }
         return null;
-    }
-
-    private static string? NormalizeCidrs(string? csv)
-    {
-        if (string.IsNullOrWhiteSpace(csv)) return null;
-        var parts = csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return parts.Length == 0 ? null : string.Join(",", parts);
     }
 
     // Hash the basic-auth password with bcrypt. Returns null when no auth is set.

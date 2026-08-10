@@ -107,6 +107,182 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
+    private async Task<Guid> NewServerAsync(HttpClient client, string host)
+    {
+        var server = await (await client.PostAsJsonAsync("/api/servers",
+            new { name = host, host, os = "linux" })).Content.ReadFromJsonAsync<IdName>();
+        return server!.id;
+    }
+
+    [Fact]
+    public async Task AdditionalUpstreams_AreSubjectToTheSameSsrfPolicy()
+    {
+        // The primary upstream is validated; an unvalidated second field would
+        // be a way straight round it.
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.30");
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "lb.example.com",
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+            hardening = new { additionalUpstreams = "http://169.254.169.254/latest/meta-data/" },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task MixedUpstreamSchemes_AreRejected()
+    {
+        // One transport serves every upstream in the handler, so a rule cannot
+        // be half TLS. Accepting it would mean cleartext to a TLS port.
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.31");
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "mixed.example.com",
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+            hardening = new { additionalUpstreams = "https://10.0.0.21:8443" },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task ChangingOnlyTheUpstreamScheme_CannotStrandMismatchedExtraUpstreams()
+    {
+        // The gap: `hardening` omitted means "leave those settings alone", so
+        // the stored additional upstreams survive. Validate only what the
+        // request carries and the primary's scheme can drift away from them,
+        // leaving a rule with one https and one http upstream — which the
+        // builder resolves by putting a TLS transport on both.
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.35");
+        var created = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "drift.example.com",
+            upstreamUrl = "https://10.0.0.20:8443",
+            enableTls = true,
+            enabled = true,
+            hardening = new { additionalUpstreams = "https://10.0.0.21:8443" },
+        });
+        created.EnsureSuccessStatusCode();
+        var rule = await created.Content.ReadFromJsonAsync<RuleResult>();
+
+        // Same rule, primary flipped to http, no `hardening` block at all.
+        var resp = await client.PutAsJsonAsync($"/api/servers/{serverId}/rules/{rule!.id}", new
+        {
+            domain = "drift.example.com",
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task HealthCheckTimeout_IsCheckedAgainstTheDefaultInterval_WhenNoneGiven()
+    {
+        // Guarding only when both are present let a 300s timeout through
+        // against Caddy's 30s default interval.
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.36");
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "hc.example.com",
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+            hardening = new { healthCheckPath = "/healthz", healthCheckTimeoutSeconds = 300 },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("{\"loadBalancePolicy\":\"magic\"}")]
+    [InlineData("{\"frameOptions\":\"ALLOW-FROM https://evil.example\"}")]
+    [InlineData("{\"healthCheckPath\":\"healthz\"}")]
+    [InlineData("{\"dialTimeoutSeconds\":0}")]
+    [InlineData("{\"maxRequestBodyBytes\":-1}")]
+    [InlineData("{\"healthCheckExpectStatus\":42}")]
+    [InlineData("{\"healthCheckIntervalSeconds\":5,\"healthCheckTimeoutSeconds\":30}")]
+    public async Task InvalidHardening_IsRejected(string hardeningJson)
+    {
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.32");
+        var body = $$"""
+            {"domain":"h.example.com","upstreamUrl":"http://10.0.0.20:8080",
+             "enableTls":true,"enabled":true,"hardening":{{hardeningJson}}}
+            """;
+        var resp = await client.PostAsync($"/api/servers/{serverId}/rules",
+            new StringContent(body, System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task OmittedHardening_LeavesTheRuleUsable_WithSafeDefaults()
+    {
+        // Clients written before these settings existed must keep working.
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.33");
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "legacy.example.com",
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+        });
+        resp.EnsureSuccessStatusCode();
+        var rule = await resp.Content.ReadFromJsonAsync<RuleWithHardening>();
+        Assert.True(rule!.hardening.enableSecurityHeaders);
+        Assert.Null(rule.hardening.hstsMaxAgeDays);
+        Assert.False(rule.hardening.skipAccessLog);
+    }
+
+    [Fact]
+    public async Task Hardening_RoundTripsThroughCreateAndRead()
+    {
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.34");
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "full.example.com",
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+            hardening = new
+            {
+                additionalUpstreams = "http://10.0.0.21:8080",
+                loadBalancePolicy = "round_robin",
+                dialTimeoutSeconds = 5,
+                maxRequestBodyBytes = 1048576L,
+                hstsMaxAgeDays = 365,
+                hstsIncludeSubdomains = true,
+                frameOptions = "deny",
+                healthCheckPath = "/healthz",
+                healthCheckIntervalSeconds = 30,
+                healthCheckTimeoutSeconds = 5,
+                healthCheckExpectStatus = 2,
+                skipAccessLog = true,
+            },
+        });
+        resp.EnsureSuccessStatusCode();
+        var rule = await resp.Content.ReadFromJsonAsync<RuleWithHardening>();
+        Assert.Equal("round_robin", rule!.hardening.loadBalancePolicy);
+        Assert.Equal("DENY", rule.hardening.frameOptions); // normalised on the way in
+        Assert.Equal(1048576L, rule.hardening.maxRequestBodyBytes);
+        Assert.True(rule.hardening.skipAccessLog);
+        Assert.True(rule.hardening.hstsIncludeSubdomains);
+
+        // And it reaches the generated Caddy config, not just the database.
+        var config = await (await client.GetAsync("/api/proxy/config")).Content.ReadAsStringAsync();
+        Assert.Contains("\"uri\": \"/healthz\"", config);
+        Assert.Contains("round_robin", config);
+        Assert.Contains("max-age=31536000; includeSubDomains", config);
+    }
+
     [Fact]
     public async Task LastAdmin_CannotBeDemoted()
     {
@@ -154,6 +330,11 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
     // --- response shapes ---
     private record IdName(Guid id, string name);
     private record RuleResult(Guid id, bool enabled);
+    private record HardeningResult(
+        string? additionalUpstreams, string? loadBalancePolicy, int? dialTimeoutSeconds,
+        long? maxRequestBodyBytes, bool enableSecurityHeaders, int? hstsMaxAgeDays,
+        bool hstsIncludeSubdomains, string? frameOptions, string? healthCheckPath, bool skipAccessLog);
+    private record RuleWithHardening(Guid id, string domain, HardeningResult hardening);
     private record ValidateResult(bool valid, string[] issues, bool engineValidated);
     private record MetricsResult(bool available, long totalRequests);
     private record HealthResult(bool reachable, int? statusCode);

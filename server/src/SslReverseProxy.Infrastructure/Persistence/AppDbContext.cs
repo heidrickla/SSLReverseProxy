@@ -49,6 +49,10 @@ public class AppDbContext : DbContext
             e.Property(r => r.DeniedCidrs).HasMaxLength(2048);
             e.Property(r => r.BasicAuthUsername).HasMaxLength(200);
             e.Property(r => r.BasicAuthPasswordHash).HasMaxLength(200);
+            e.Property(r => r.AdditionalUpstreams).HasMaxLength(4096);
+            e.Property(r => r.LoadBalancePolicy).HasMaxLength(50);
+            e.Property(r => r.FrameOptions).HasMaxLength(20);
+            e.Property(r => r.HealthCheckPath).HasMaxLength(2048);
             e.HasIndex(r => r.Domain);
         });
 

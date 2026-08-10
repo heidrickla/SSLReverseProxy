@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SslReverseProxy.Infrastructure.Persistence;
 
@@ -10,9 +11,11 @@ using SslReverseProxy.Infrastructure.Persistence;
 namespace SslReverseProxy.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260810192603_AddProxyHardeningOptions")]
+    partial class AddProxyHardeningOptions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
@@ -66,7 +69,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("ApiKeys", (string)null);
+                    b.ToTable("ApiKeys");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.AuditEntry", b =>
@@ -113,7 +116,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("Timestamp");
 
-                    b.ToTable("AuditEntries", (string)null);
+                    b.ToTable("AuditEntries");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.Certificate", b =>
@@ -153,7 +156,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("Domain");
 
-                    b.ToTable("Certificates", (string)null);
+                    b.ToTable("Certificates");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ConfigSnapshot", b =>
@@ -185,7 +188,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("CreatedAt");
 
-                    b.ToTable("ConfigSnapshots", (string)null);
+                    b.ToTable("ConfigSnapshots");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ProxyRule", b =>
@@ -293,7 +296,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("ServerId");
 
-                    b.ToTable("Rules", (string)null);
+                    b.ToTable("Rules");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ProxyServer", b =>
@@ -321,7 +324,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Servers", (string)null);
+                    b.ToTable("Servers");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.User", b =>
@@ -357,7 +360,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.ToTable("Users", (string)null);
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ApiKey", b =>
