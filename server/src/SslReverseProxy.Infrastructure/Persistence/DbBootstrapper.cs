@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
+using SslReverseProxy.Infrastructure.Security;
 
 namespace SslReverseProxy.Infrastructure.Persistence;
 
@@ -36,6 +37,9 @@ public static class DbBootstrapper
 
         var apiKeys = scope.ServiceProvider.GetRequiredService<IApiKeyService>();
         var issued = await apiKeys.CreateAsync(admin.Id, "bootstrap", lifetime: null, ct);
+
+        // Offered in memory so a local dev UI can claim it via /api/bootstrap-key.
+        scope.ServiceProvider.GetRequiredService<BootstrapKeyBroker>().Offer(issued.PlaintextToken);
 
         logger.LogWarning(
             "Seeded bootstrap admin. One-time API key (store it now, it will not be shown again): {Token}",

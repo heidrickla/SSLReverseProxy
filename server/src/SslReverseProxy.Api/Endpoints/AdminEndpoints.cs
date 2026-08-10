@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using SslReverseProxy.Api.Auth;
 using SslReverseProxy.Api.Contracts;
@@ -5,6 +6,7 @@ using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
 using SslReverseProxy.Core.Security;
 using SslReverseProxy.Infrastructure.Persistence;
+using SslReverseProxy.Infrastructure.Security;
 
 namespace SslReverseProxy.Api.Endpoints;
 
@@ -32,6 +34,26 @@ public static class AdminEndpoints
         // Liveness probe — intentionally unauthenticated, returns no sensitive data.
         app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }))
             .AllowAnonymous().WithTags("Meta");
+
+        // First-run convenience: lets a local dev UI claim the seeded bootstrap
+        // key instead of copying it from the log. Deliberately narrow — answers
+        // only in Development, only to loopback clients, and only until the key
+        // is claimed once or the seeding process exits; 404 in every other case
+        // so probes learn nothing.
+        app.MapGet("/api/bootstrap-key", (
+            HttpContext ctx, IHostEnvironment env, BootstrapKeyBroker broker, ILoggerFactory loggerFactory) =>
+        {
+            if (!env.IsDevelopment()) return Results.NotFound();
+            var ip = ctx.Connection.RemoteIpAddress;
+            if (ip is null || !IPAddress.IsLoopback(ip)) return Results.NotFound();
+
+            var token = broker.Claim();
+            if (token is null) return Results.NotFound();
+
+            loggerFactory.CreateLogger("DbBootstrapper").LogWarning(
+                "Bootstrap API key was claimed via /api/bootstrap-key from {Ip}; it can no longer be claimed again.", ip);
+            return Results.Ok(new { apiKey = token });
+        }).AllowAnonymous().WithTags("Meta");
 
         // Readiness probe — checks dependencies (DB + proxy). Unauthenticated but
         // returns only a coarse ready flag and the proxy state string.
