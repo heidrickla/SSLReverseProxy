@@ -24,6 +24,7 @@ public static class DependencyInjection
         // API-key pepper comes from configuration/secret store, never source.
         var pepper = config["Security:ApiKeyPepper"];
         services.AddSingleton<IApiKeyHasher>(_ => new ApiKeyHasher(pepper));
+        services.AddSingleton<BootstrapKeyBroker>();
         services.AddScoped<IApiKeyService, ApiKeyService>();
         services.AddScoped<IAuditLog, AuditLog>();
 

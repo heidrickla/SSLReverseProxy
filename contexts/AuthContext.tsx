@@ -27,7 +27,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         auditLogs
     } = useApiData(!!currentUser);
 
-    // Restore a session from a stored API key on load.
+    // Restore a session from a stored API key on load; with no stored key, try
+    // to claim the first-run bootstrap key (dev-only, loopback-only) so a fresh
+    // install signs in without copying the key from the server log.
     useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -36,6 +38,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const who = await api.whoami();
                     if (!cancelled) setCurrentUser(userFromWhoAmI(who));
                 } catch {
+                    apiKeyStore.clear();
+                }
+            } else if (import.meta.env.DEV) {
+                // Dev builds only. The backend already refuses this outside
+                // Development and off-loopback; gating here too means a
+                // production bundle never issues the request at all, rather
+                // than issuing it and getting a 404 on every signed-out load.
+                // Vite folds import.meta.env.DEV to false and drops this branch,
+                // so no call to bootstrapKey() survives in the shipped JS.
+                //
+                // Note the string "/api/bootstrap-key" DOES still appear in the
+                // production bundle: it is the api.bootstrapKey method
+                // definition in services/apiClient.ts, which tree-shaking cannot
+                // remove because it is a property on an exported object. It is
+                // unreachable, not live - grepping the bundle for the path is a
+                // misleading way to check this gate.
+                try {
+                    const { apiKey } = await api.bootstrapKey();
+                    apiKeyStore.set(apiKey);
+                    const who = await api.whoami();
+                    if (!cancelled) setCurrentUser(userFromWhoAmI(who));
+                } catch {
+                    // No bootstrap key available (normal outside first run) or
+                    // the API is down — fall through to the sign-in screen.
                     apiKeyStore.clear();
                 }
             }

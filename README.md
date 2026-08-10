@@ -18,9 +18,9 @@ an append-only audit trail with config snapshots and one-call rollback.
   lifecycle. See its README for the full endpoint and security reference.
 - **[SECURITY.md](SECURITY.md)** — the security model and threat boundaries.
 
-> **Status:** the backend control plane is implemented and tested. The React app
-> still runs on mock data — wiring it to the API via
-> [`services/apiClient.ts`](services/apiClient.ts) is the remaining step.
+> **Status:** the backend control plane is implemented and tested, and the React
+> app talks to it via [`services/apiClient.ts`](services/apiClient.ts) —
+> sign in with an API key (auto-claimed on a first dev run).
 
 ## Run Locally
 
@@ -39,5 +39,7 @@ dotnet run --project src/SslReverseProxy.Api
 ```
 
 The first backend run seeds a bootstrap admin and prints a one-time API key to
-the log — capture it and use it as `X-Api-Key`. Full details in
+the log. In development you don't need to copy it: the UI claims it
+automatically on first load via `GET /api/bootstrap-key` (Development +
+loopback only, single claim) and signs you in. Full details in
 [server/README.md](server/README.md).
