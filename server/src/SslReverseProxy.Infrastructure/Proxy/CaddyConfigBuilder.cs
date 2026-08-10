@@ -248,7 +248,30 @@ public static class CaddyConfigBuilder
         // is what actually selects HTTPS to the backend.
         var transport = new JsonObject();
         if (UsesTls(upstreams))
-            transport["tls"] = new JsonObject();
+        {
+            // Any tls object at all is what selects HTTPS to the backend; the
+            // members below only shape how the backend's certificate is judged.
+            var upstreamTls = new JsonObject();
+
+            if (!string.IsNullOrWhiteSpace(rule.UpstreamTlsServerName))
+                upstreamTls["server_name"] = rule.UpstreamTlsServerName!.Trim();
+
+            // The tls.ca_pool.source module, not the older root_ca_pem_files —
+            // that one still loads but Caddy logs it as deprecated.
+            if (!string.IsNullOrWhiteSpace(rule.UpstreamTlsTrustedCaFile))
+            {
+                upstreamTls["ca"] = new JsonObject
+                {
+                    ["provider"] = "file",
+                    ["pem_files"] = new JsonArray { rule.UpstreamTlsTrustedCaFile!.Trim() },
+                };
+            }
+
+            if (rule.UpstreamTlsInsecureSkipVerify)
+                upstreamTls["insecure_skip_verify"] = true;
+
+            transport["tls"] = upstreamTls;
+        }
         if (rule.DialTimeoutSeconds is > 0)
             transport["dial_timeout"] = Seconds(rule.DialTimeoutSeconds.Value);
         if (rule.UpstreamReadTimeoutSeconds is > 0)

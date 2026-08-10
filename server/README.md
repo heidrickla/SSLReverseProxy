@@ -119,6 +119,7 @@ Servers / rules
   | Field | Effect |
   | --- | --- |
   | `additionalUpstreams`, `loadBalancePolicy` | Extra upstreams (same SSRF policy, and all must share the primary's scheme) plus a Caddy selection policy: `random`, `random_choose`, `first`, `round_robin`, `least_conn`, `ip_hash`, `uri_hash`, `client_ip_hash`. |
+  | `upstreamTlsServerName`, `upstreamTlsTrustedCaFile`, `upstreamTlsInsecureSkipVerify` | How an `https://` upstream's certificate is judged; rejected on a plaintext upstream, where they would mean nothing. `serverName` sets the expected SNI/certificate name, for a backend reached by IP or by a name not on its certificate. `trustedCaFile` is a PEM on the proxy host and is the right answer for a private or self-signed backend — the certificate is still verified, just against a CA the system store lacks (emitted as the `tls.ca_pool.source` module, not the deprecated `root_ca_pem_files`). `insecureSkipVerify` stops verification altogether and throws away what upstream TLS was for; it cannot be combined with a trusted CA, since that combination verifies nothing. |
   | `dialTimeoutSeconds`, `upstreamReadTimeoutSeconds`, `upstreamWriteTimeoutSeconds` | Bounds on the upstream leg. Caddy ships no read/write timeout, so a backend that stalls mid-response otherwise holds the connection open indefinitely. |
   | `maxRequestBodyBytes` | Caps the request body; the client gets `413`. Enforced as the body is read, not from `Content-Length`, so an oversized upload is cut off partway rather than refused up front. |
   | `enableSecurityHeaders` | On by default; emits `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`. |
@@ -148,9 +149,11 @@ Users / keys / audit
 >
 > **`https://` upstreams:** Caddy's JSON has no scheme inference — the `dial` address is only
 > `host:port`, and it is the reverse-proxy transport that decides TLS. The generated config sets
-> that transport, so an `https://` upstream is now actually spoken to over TLS. On Caddy 2.11+
-> the transport also rewrites the `Host` header to the upstream's `host:port`; if your backend
-> serves virtual hosts keyed on the original `Host`, account for that.
+> that transport, so an `https://` upstream is now actually spoken to over TLS. Certificate
+> verification is on, so an internal backend with a private CA or a name mismatch needs
+> `upstreamTlsTrustedCaFile` or `upstreamTlsServerName`. On Caddy 2.11+ the transport also
+> rewrites the `Host` header to the upstream's `host:port`; if your backend serves virtual hosts
+> keyed on the original `Host`, account for that.
 
 ## Production / deployment
 

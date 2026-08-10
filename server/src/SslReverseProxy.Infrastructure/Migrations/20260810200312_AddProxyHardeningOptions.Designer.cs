@@ -11,7 +11,7 @@ using SslReverseProxy.Infrastructure.Persistence;
 namespace SslReverseProxy.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260810192603_AddProxyHardeningOptions")]
+    [Migration("20260810200312_AddProxyHardeningOptions")]
     partial class AddProxyHardeningOptions
     {
         /// <inheritdoc />
@@ -281,6 +281,17 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.Property<int?>("UpstreamReadTimeoutSeconds")
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("UpstreamTlsInsecureSkipVerify")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UpstreamTlsServerName")
+                        .HasMaxLength(253)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpstreamTlsTrustedCaFile")
+                        .HasMaxLength(4096)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("UpstreamUrl")
                         .IsRequired()

@@ -26,6 +26,26 @@ public class CaddyBinaryValidationTests
     private readonly ITestOutputHelper _out;
     public CaddyBinaryValidationTests(ITestOutputHelper output) => _out = output;
 
+    /// <summary>
+    /// A real PEM on disk. Caddy reads the CA pool at provision time, not just
+    /// at request time, so a made-up path fails validation for a reason that
+    /// has nothing to do with the config being right.
+    /// </summary>
+    private static readonly Lazy<string> TrustedCaPem = new(() =>
+    {
+        var path = Path.Combine(Path.GetTempPath(), "sslrp-test-ca.pem");
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var req = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=sslrp-test-ca", rsa,
+            System.Security.Cryptography.HashAlgorithmName.SHA256,
+            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        req.CertificateExtensions.Add(
+            new System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension(true, false, 0, true));
+        using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        File.WriteAllText(path, cert.ExportCertificatePem());
+        return path;
+    });
+
     private static ProxyRule R(string domain, string upstream, Action<ProxyRule>? t = null)
     {
         var r = new ProxyRule { Domain = domain, UpstreamUrl = upstream, Enabled = true };
@@ -103,6 +123,15 @@ public class CaddyBinaryValidationTests
         {
             TlsCipherSuites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
         }),
+
+        ["upstream-tls-options"] = ([R("a.example.com", "https://10.0.0.5:8443", r =>
+        {
+            r.UpstreamTlsServerName = "backend.internal";
+            r.UpstreamTlsTrustedCaFile = TrustedCaPem.Value;
+        })], new ProxyOptions()),
+
+        ["upstream-tls-skip-verify"] = ([R("a.example.com", "https://10.0.0.5:8443",
+            r => r.UpstreamTlsInsecureSkipVerify = true)], new ProxyOptions()),
 
         ["plaintext-host"] = ([R("plain.example.com", "http://10.0.0.5", r => r.EnableTls = false)],
             new ProxyOptions()),

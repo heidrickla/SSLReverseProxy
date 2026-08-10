@@ -53,6 +53,8 @@ public class AppDbContext : DbContext
             e.Property(r => r.LoadBalancePolicy).HasMaxLength(50);
             e.Property(r => r.FrameOptions).HasMaxLength(20);
             e.Property(r => r.HealthCheckPath).HasMaxLength(2048);
+            e.Property(r => r.UpstreamTlsServerName).HasMaxLength(253);
+            e.Property(r => r.UpstreamTlsTrustedCaFile).HasMaxLength(4096);
             e.HasIndex(r => r.Domain);
         });
 

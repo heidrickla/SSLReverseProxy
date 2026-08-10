@@ -11,22 +11,37 @@ public sealed record CreateServerRequest(string Name, string Host, string Os);
 /// defaulted to null so a client that predates these settings still works —
 /// omitting it leaves every value at the rule's current setting.
 /// </summary>
-public sealed record RuleHardeningRequest(
-    string? AdditionalUpstreams = null,
-    string? LoadBalancePolicy = null,
-    int? DialTimeoutSeconds = null,
-    int? UpstreamReadTimeoutSeconds = null,
-    int? UpstreamWriteTimeoutSeconds = null,
-    long? MaxRequestBodyBytes = null,
-    bool? EnableSecurityHeaders = null,
-    int? HstsMaxAgeDays = null,
-    bool? HstsIncludeSubdomains = null,
-    string? FrameOptions = null,
-    string? HealthCheckPath = null,
-    int? HealthCheckIntervalSeconds = null,
-    int? HealthCheckTimeoutSeconds = null,
-    int? HealthCheckExpectStatus = null,
-    bool? SkipAccessLog = null);
+public sealed record RuleHardeningRequest
+{
+    // Init properties rather than a positional record: at this width a
+    // positional list is a row of same-typed slots that silently accepts a
+    // wrong order, and the compiler only notices when two adjacent types
+    // happen to differ.
+    public string? AdditionalUpstreams { get; init; }
+    public string? LoadBalancePolicy { get; init; }
+
+    public int? DialTimeoutSeconds { get; init; }
+    public int? UpstreamReadTimeoutSeconds { get; init; }
+    public int? UpstreamWriteTimeoutSeconds { get; init; }
+
+    public string? UpstreamTlsServerName { get; init; }
+    public string? UpstreamTlsTrustedCaFile { get; init; }
+    public bool? UpstreamTlsInsecureSkipVerify { get; init; }
+
+    public long? MaxRequestBodyBytes { get; init; }
+
+    public bool? EnableSecurityHeaders { get; init; }
+    public int? HstsMaxAgeDays { get; init; }
+    public bool? HstsIncludeSubdomains { get; init; }
+    public string? FrameOptions { get; init; }
+
+    public string? HealthCheckPath { get; init; }
+    public int? HealthCheckIntervalSeconds { get; init; }
+    public int? HealthCheckTimeoutSeconds { get; init; }
+    public int? HealthCheckExpectStatus { get; init; }
+
+    public bool? SkipAccessLog { get; init; }
+}
 
 public sealed record CreateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null);
 public sealed record UpdateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null);
@@ -38,22 +53,33 @@ public sealed record RollbackRequest(long SnapshotId);
 
 // Responses
 public sealed record ServerDto(Guid Id, string Name, string Host, string Os, int RuleCount);
-public sealed record RuleHardeningDto(
-    string? AdditionalUpstreams,
-    string? LoadBalancePolicy,
-    int? DialTimeoutSeconds,
-    int? UpstreamReadTimeoutSeconds,
-    int? UpstreamWriteTimeoutSeconds,
-    long? MaxRequestBodyBytes,
-    bool EnableSecurityHeaders,
-    int? HstsMaxAgeDays,
-    bool HstsIncludeSubdomains,
-    string? FrameOptions,
-    string? HealthCheckPath,
-    int? HealthCheckIntervalSeconds,
-    int? HealthCheckTimeoutSeconds,
-    int? HealthCheckExpectStatus,
-    bool SkipAccessLog);
+public sealed record RuleHardeningDto
+{
+    public string? AdditionalUpstreams { get; init; }
+    public string? LoadBalancePolicy { get; init; }
+
+    public int? DialTimeoutSeconds { get; init; }
+    public int? UpstreamReadTimeoutSeconds { get; init; }
+    public int? UpstreamWriteTimeoutSeconds { get; init; }
+
+    public string? UpstreamTlsServerName { get; init; }
+    public string? UpstreamTlsTrustedCaFile { get; init; }
+    public bool UpstreamTlsInsecureSkipVerify { get; init; }
+
+    public long? MaxRequestBodyBytes { get; init; }
+
+    public bool EnableSecurityHeaders { get; init; }
+    public int? HstsMaxAgeDays { get; init; }
+    public bool HstsIncludeSubdomains { get; init; }
+    public string? FrameOptions { get; init; }
+
+    public string? HealthCheckPath { get; init; }
+    public int? HealthCheckIntervalSeconds { get; init; }
+    public int? HealthCheckTimeoutSeconds { get; init; }
+    public int? HealthCheckExpectStatus { get; init; }
+
+    public bool SkipAccessLog { get; init; }
+}
 
 public sealed record RuleDto(Guid Id, Guid ServerId, string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, bool BasicAuthEnabled, string? BasicAuthUsername, RuleHardeningDto Hardening);
 public sealed record ProxyValidationDto(bool Valid, IReadOnlyList<string> Issues, bool EngineValidated);
@@ -75,13 +101,27 @@ public static class DtoMappings
     public static ServerDto ToDto(this ProxyServer s) => new(s.Id, s.Name, s.Host, s.Os, s.Rules?.Count ?? 0);
     public static RuleDto ToDto(this ProxyRule r) => new(r.Id, r.ServerId, r.Domain, r.UpstreamUrl, r.EnableTls, r.Enabled, r.AllowedCidrs, r.DeniedCidrs, r.RateLimitPerMinute, !string.IsNullOrEmpty(r.BasicAuthPasswordHash), r.BasicAuthUsername, r.ToHardeningDto());
 
-    public static RuleHardeningDto ToHardeningDto(this ProxyRule r) => new(
-        r.AdditionalUpstreams, r.LoadBalancePolicy,
-        r.DialTimeoutSeconds, r.UpstreamReadTimeoutSeconds, r.UpstreamWriteTimeoutSeconds,
-        r.MaxRequestBodyBytes, r.EnableSecurityHeaders, r.HstsMaxAgeDays,
-        r.HstsIncludeSubdomains, r.FrameOptions,
-        r.HealthCheckPath, r.HealthCheckIntervalSeconds, r.HealthCheckTimeoutSeconds,
-        r.HealthCheckExpectStatus, r.SkipAccessLog);
+    public static RuleHardeningDto ToHardeningDto(this ProxyRule r) => new()
+    {
+        AdditionalUpstreams = r.AdditionalUpstreams,
+        LoadBalancePolicy = r.LoadBalancePolicy,
+        DialTimeoutSeconds = r.DialTimeoutSeconds,
+        UpstreamReadTimeoutSeconds = r.UpstreamReadTimeoutSeconds,
+        UpstreamWriteTimeoutSeconds = r.UpstreamWriteTimeoutSeconds,
+        UpstreamTlsServerName = r.UpstreamTlsServerName,
+        UpstreamTlsTrustedCaFile = r.UpstreamTlsTrustedCaFile,
+        UpstreamTlsInsecureSkipVerify = r.UpstreamTlsInsecureSkipVerify,
+        MaxRequestBodyBytes = r.MaxRequestBodyBytes,
+        EnableSecurityHeaders = r.EnableSecurityHeaders,
+        HstsMaxAgeDays = r.HstsMaxAgeDays,
+        HstsIncludeSubdomains = r.HstsIncludeSubdomains,
+        FrameOptions = r.FrameOptions,
+        HealthCheckPath = r.HealthCheckPath,
+        HealthCheckIntervalSeconds = r.HealthCheckIntervalSeconds,
+        HealthCheckTimeoutSeconds = r.HealthCheckTimeoutSeconds,
+        HealthCheckExpectStatus = r.HealthCheckExpectStatus,
+        SkipAccessLog = r.SkipAccessLog,
+    };
     public static SnapshotDto ToDto(this ConfigSnapshot s) => new(s.Id, s.CreatedAt, s.Actor, s.RuleCount, s.Note);
     public static CertificateDto ToDto(this Certificate c) => new(c.Id, c.Domain, c.Issuer, c.Status.ToString(), c.ExpiresAt, c.Managed);
     public static UserDto ToDto(this User u) => new(u.Id, u.Name, u.Email, u.Role.ToString(), u.IsActive, u.LastSeenAt);

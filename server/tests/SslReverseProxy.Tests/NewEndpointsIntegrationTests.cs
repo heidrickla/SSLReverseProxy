@@ -200,6 +200,65 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
+    [Fact]
+    public async Task UpstreamTlsSettings_AreRejectedOnAPlaintextUpstream()
+    {
+        // Accepting them silently would let someone believe a name mismatch had
+        // been handled on a route where no TLS is spoken at all.
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.37");
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "plain.example.com",
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+            hardening = new { upstreamTlsServerName = "backend.internal" },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task SkipVerify_AndATrustedCa_CannotBothBeSet()
+    {
+        // They express opposite intentions, and Caddy resolves the conflict by
+        // verifying nothing.
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.38");
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "conflict.example.com",
+            upstreamUrl = "https://10.0.0.20:8443",
+            enableTls = true,
+            enabled = true,
+            hardening = new
+            {
+                upstreamTlsInsecureSkipVerify = true,
+                upstreamTlsTrustedCaFile = "/etc/ssl/ca.pem",
+            },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpstreamTlsServerName_RoundTrips()
+    {
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.39");
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain = "tls.example.com",
+            upstreamUrl = "https://10.0.0.20:8443",
+            enableTls = true,
+            enabled = true,
+            hardening = new { upstreamTlsServerName = "backend.internal" },
+        });
+        resp.EnsureSuccessStatusCode();
+
+        var config = await (await client.GetAsync("/api/proxy/config")).Content.ReadAsStringAsync();
+        Assert.Contains("\"server_name\": \"backend.internal\"", config);
+    }
+
     [Theory]
     [InlineData("{\"loadBalancePolicy\":\"magic\"}")]
     [InlineData("{\"frameOptions\":\"ALLOW-FROM https://evil.example\"}")]

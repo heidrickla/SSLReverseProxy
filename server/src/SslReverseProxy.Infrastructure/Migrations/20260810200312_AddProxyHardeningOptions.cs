@@ -109,6 +109,27 @@ namespace SslReverseProxy.Infrastructure.Migrations
                 type: "INTEGER",
                 nullable: true);
 
+            migrationBuilder.AddColumn<bool>(
+                name: "UpstreamTlsInsecureSkipVerify",
+                table: "Rules",
+                type: "INTEGER",
+                nullable: false,
+                defaultValue: false);
+
+            migrationBuilder.AddColumn<string>(
+                name: "UpstreamTlsServerName",
+                table: "Rules",
+                type: "TEXT",
+                maxLength: 253,
+                nullable: true);
+
+            migrationBuilder.AddColumn<string>(
+                name: "UpstreamTlsTrustedCaFile",
+                table: "Rules",
+                type: "TEXT",
+                maxLength: 4096,
+                nullable: true);
+
             migrationBuilder.AddColumn<int>(
                 name: "UpstreamWriteTimeoutSeconds",
                 table: "Rules",
@@ -173,6 +194,18 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
             migrationBuilder.DropColumn(
                 name: "UpstreamReadTimeoutSeconds",
+                table: "Rules");
+
+            migrationBuilder.DropColumn(
+                name: "UpstreamTlsInsecureSkipVerify",
+                table: "Rules");
+
+            migrationBuilder.DropColumn(
+                name: "UpstreamTlsServerName",
+                table: "Rules");
+
+            migrationBuilder.DropColumn(
+                name: "UpstreamTlsTrustedCaFile",
                 table: "Rules");
 
             migrationBuilder.DropColumn(
