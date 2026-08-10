@@ -279,6 +279,17 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.Property<int?>("UpstreamReadTimeoutSeconds")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("UpstreamTlsInsecureSkipVerify")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UpstreamTlsServerName")
+                        .HasMaxLength(253)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpstreamTlsTrustedCaFile")
+                        .HasMaxLength(4096)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("UpstreamUrl")
                         .IsRequired()
                         .HasMaxLength(2048)

@@ -60,6 +60,9 @@ export interface RuleHardening {
   upstreamWriteTimeoutSeconds: number | null;
   maxRequestBodyBytes: number | null;
   enableSecurityHeaders: boolean;
+  upstreamTlsServerName: string | null;
+  upstreamTlsTrustedCaFile: string | null;
+  upstreamTlsInsecureSkipVerify: boolean;
   hstsMaxAgeDays: number | null;
   hstsIncludeSubdomains: boolean;
   frameOptions: string | null;

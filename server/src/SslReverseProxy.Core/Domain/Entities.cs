@@ -121,6 +121,34 @@ public class ProxyRule
     public int? HstsMaxAgeDays { get; set; }
 
     /// <summary>
+    /// SNI / certificate name to expect from an https upstream. Without it
+    /// Caddy verifies against the dial address, so a backend reached by IP or
+    /// by an internal name that is not on its certificate fails the handshake.
+    /// Only meaningful when the upstreams are https.
+    /// </summary>
+    public string? UpstreamTlsServerName { get; set; }
+
+    /// <summary>
+    /// PEM file on the proxy host holding the CA that signed the upstream's
+    /// certificate. This is the right way to reach a backend with a private or
+    /// self-signed certificate: the certificate is still verified, just against
+    /// a CA the system store does not carry.
+    /// </summary>
+    public string? UpstreamTlsTrustedCaFile { get; set; }
+
+    /// <summary>
+    /// Stops verifying the upstream's certificate entirely.
+    /// <para>
+    /// This throws away what TLS to the backend was for — anything that can get
+    /// between the proxy and the upstream can present its own certificate and
+    /// read or rewrite the traffic. Prefer <see cref="UpstreamTlsServerName"/>
+    /// for a name mismatch and <see cref="UpstreamTlsTrustedCaFile"/> for a
+    /// private CA; reach for this only when neither is possible.
+    /// </para>
+    /// </summary>
+    public bool UpstreamTlsInsecureSkipVerify { get; set; }
+
+    /// <summary>
     /// Adds includeSubDomains to the HSTS header. Off by default and separate
     /// from <see cref="HstsMaxAgeDays"/> on purpose: on an apex domain it pins
     /// every subdomain to HTTPS, including hosts served by systems this rule

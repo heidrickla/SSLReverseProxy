@@ -252,6 +252,31 @@ public static class ServerEndpoints
         if (!string.IsNullOrWhiteSpace(h.HealthCheckPath) && !h.HealthCheckPath.StartsWith('/'))
             errors["hardening.healthCheckPath"] = ["Must be a path starting with '/'."];
 
+        // Upstream TLS settings only mean anything when the backend is https,
+        // and silently keeping a setting that does nothing invites someone to
+        // believe a name mismatch has been dealt with when it has not.
+        var upstreamIsTls = Uri.TryCreate(primaryUpstream, UriKind.Absolute, out var pu) &&
+                            pu.Scheme == Uri.UriSchemeHttps;
+        if (!upstreamIsTls &&
+            (!string.IsNullOrWhiteSpace(h.UpstreamTlsServerName) ||
+             !string.IsNullOrWhiteSpace(h.UpstreamTlsTrustedCaFile) ||
+             h.UpstreamTlsInsecureSkipVerify == true))
+        {
+            errors["hardening.upstreamTlsServerName"] =
+                ["Upstream TLS settings apply only when the upstream URL is https."];
+        }
+
+        if (!string.IsNullOrWhiteSpace(h.UpstreamTlsServerName) &&
+            Uri.CheckHostName(h.UpstreamTlsServerName.Trim()) == UriHostNameType.Unknown)
+            errors["hardening.upstreamTlsServerName"] = ["Must be a valid host name."];
+
+        // Verifying against a private CA and not verifying at all are different
+        // intentions. Accepting both would leave it ambiguous which one applied
+        // — and Caddy resolves that ambiguity by not checking anything.
+        if (h.UpstreamTlsInsecureSkipVerify == true && !string.IsNullOrWhiteSpace(h.UpstreamTlsTrustedCaFile))
+            errors["hardening.upstreamTlsInsecureSkipVerify"] =
+                ["Cannot skip verification and supply a trusted CA at the same time; skipping ignores the CA."];
+
         // Caddy accepts either a full status code or a single leading digit
         // standing for the whole class, so 2 means "any 2xx".
         if (h.HealthCheckExpectStatus is { } es && es is not (>= 1 and <= 5) && es is not (>= 100 and <= 599))
@@ -299,6 +324,11 @@ public static class ServerEndpoints
         rule.UpstreamWriteTimeoutSeconds = h.UpstreamWriteTimeoutSeconds;
         rule.MaxRequestBodyBytes = h.MaxRequestBodyBytes;
         rule.EnableSecurityHeaders = h.EnableSecurityHeaders ?? true;
+        rule.UpstreamTlsServerName = string.IsNullOrWhiteSpace(h.UpstreamTlsServerName)
+            ? null : h.UpstreamTlsServerName.Trim();
+        rule.UpstreamTlsTrustedCaFile = string.IsNullOrWhiteSpace(h.UpstreamTlsTrustedCaFile)
+            ? null : h.UpstreamTlsTrustedCaFile.Trim();
+        rule.UpstreamTlsInsecureSkipVerify = h.UpstreamTlsInsecureSkipVerify ?? false;
         rule.HstsMaxAgeDays = h.HstsMaxAgeDays;
         rule.HstsIncludeSubdomains = h.HstsIncludeSubdomains ?? false;
         rule.FrameOptions = string.IsNullOrWhiteSpace(h.FrameOptions)

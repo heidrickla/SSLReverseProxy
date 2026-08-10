@@ -312,6 +312,56 @@ public class CaddyHardeningTests
     }
 
     [Fact]
+    public void UpstreamTls_CarriesServerNameAndTrustedCa()
+    {
+        // A backend reached by IP, or by an internal name that is not on its
+        // certificate, fails the handshake without these — and a bare tls {}
+        // gives the operator no way to say so.
+        var cfg = Build(Rule(r =>
+        {
+            r.UpstreamUrl = "https://10.0.0.5:8443";
+            r.UpstreamTlsServerName = "backend.internal";
+            r.UpstreamTlsTrustedCaFile = "/etc/ssl/internal-ca.pem";
+        }));
+        var tls = Handler(cfg, "reverse_proxy")["transport"]!["tls"]!;
+        Assert.Equal("backend.internal", (string?)tls["server_name"]);
+        // The tls.ca_pool.source module; root_ca_pem_files still works but is
+        // deprecated and Caddy warns on it.
+        Assert.Equal("file", (string?)tls["ca"]!["provider"]);
+        Assert.Equal("/etc/ssl/internal-ca.pem", (string?)tls["ca"]!["pem_files"]![0]);
+        Assert.Null(tls["root_ca_pem_files"]);
+        // Verification is still on: a private CA is trusted, not bypassed.
+        Assert.Null(tls["insecure_skip_verify"]);
+    }
+
+    [Fact]
+    public void UpstreamTls_SkipVerify_IsEmittedOnlyWhenAskedFor()
+    {
+        Assert.Null(Handler(Build(Rule(r => r.UpstreamUrl = "https://backend.example.com")), "reverse_proxy")
+            ["transport"]!["tls"]!["insecure_skip_verify"]);
+
+        var cfg = Build(Rule(r =>
+        {
+            r.UpstreamUrl = "https://backend.example.com";
+            r.UpstreamTlsInsecureSkipVerify = true;
+        }));
+        Assert.True((bool?)Handler(cfg, "reverse_proxy")["transport"]!["tls"]!["insecure_skip_verify"]);
+    }
+
+    [Fact]
+    public void UpstreamTlsSettings_AreIgnoredForPlaintextUpstreams()
+    {
+        // No tls object at all, so nothing here can accidentally switch the
+        // backend leg to TLS.
+        var cfg = Build(Rule(r =>
+        {
+            r.UpstreamUrl = "http://10.0.0.5";
+            r.UpstreamTlsServerName = "backend.internal";
+        }));
+        Assert.Null(Handler(cfg, "reverse_proxy")["transport"]?["tls"]);
+    }
+
+    [Fact]
     public void HttpUpstream_GetsNoTlsTransport()
     {
         var proxy = Handler(Build(Rule()), "reverse_proxy");
