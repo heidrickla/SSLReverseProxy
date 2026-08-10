@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { ProxyRule } from '../types';
+import { Rule } from '../services/apiClient';
 import Modal from './Modal';
 import Button from './Button';
 import ToggleSwitch from './icons/ToggleSwitch';
 import { isValidDomain, validateProxyTarget } from '../utils/validation';
 
+// This form edits three fields; the rest of a rule (access control, rate limit,
+// basic auth, hardening) is preserved by the caller rather than shown here.
+export type ProxyRuleFormData = { domain: string; upstreamUrl: string; enableTls: boolean };
+
 interface ProxyRuleModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (ruleData: { domain: string, proxyTo: string, ssl: boolean }) => void;
+  onSave: (ruleData: ProxyRuleFormData) => void;
   onDelete?: () => void;
-  initialRule: ProxyRule | null;
+  initialRule: Rule | null;
 }
 
 const ProxyRuleModal: React.FC<ProxyRuleModalProps> = ({
@@ -27,8 +31,8 @@ const ProxyRuleModal: React.FC<ProxyRuleModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setDomain(initialRule?.domain || '');
-      setProxyTo(initialRule?.proxyTo || '');
-      setSsl(initialRule?.ssl ?? true);
+      setProxyTo(initialRule?.upstreamUrl || '');
+      setSsl(initialRule?.enableTls ?? true);
     }
   }, [isOpen, initialRule]);
 
@@ -47,7 +51,7 @@ const ProxyRuleModal: React.FC<ProxyRuleModalProps> = ({
       alert(targetCheck.reason);
       return;
     }
-    onSave({ domain: domain.trim(), proxyTo: proxyTo.trim(), ssl });
+    onSave({ domain: domain.trim(), upstreamUrl: proxyTo.trim(), enableTls: ssl });
   };
   
   const isEditMode = initialRule !== null;

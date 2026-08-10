@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import { Server, ProxyRule } from '../types';
+import { Server } from '../types';
 import Button from './Button';
 import ToggleSwitch from './icons/ToggleSwitch';
 import XIcon from './icons/XIcon';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
-import ProxyRuleModal from './ProxyRuleModal';
+import ProxyRuleModal, { ProxyRuleFormData } from './ProxyRuleModal';
 import ConfirmationModal from './ConfirmationModal';
 import { useAuth } from '../contexts/AuthContext';
-import { api } from '../services/apiClient';
+import { api, Rule, RuleInput } from '../services/apiClient';
 
 interface ServerDetailPaneProps {
   server: Server;
@@ -23,28 +23,48 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
   const rulesScrollRef = useHorizontalScroll();
   const [modalState, setModalState] = useState<{
     isOpen: boolean;
-    rule: ProxyRule | null;
+    rule: Rule | null;
   }>({ isOpen: false, rule: null });
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
-  // Convert the UI rule shape to the API payload; new access-control fields keep
-  // their existing values (or default null) until the rule editor exposes them.
-  const toPayload = (domain: string, proxyTo: string, ssl: boolean) => ({
-    domain, upstreamUrl: proxyTo, enableTls: ssl, enabled: true,
-    allowedCidrs: null, deniedCidrs: null,
+  /**
+   * Build the update body for an existing rule from its current values, with
+   * `changes` applied on top.
+   *
+   * PUT replaces the whole rule, so every field this pane does not edit still
+   * has to be sent or the server clears it. Two fields are deliberately absent:
+   *
+   *  - `hardening`: omitting the block entirely tells the API to leave those
+   *    settings alone, which is what we want since nothing here edits them.
+   *  - `basicAuthPassword`: write-only, and the API keeps the stored hash when a
+   *    username arrives without a new password.
+   *
+   * The values come from the last load of `server.rules`, so a change made
+   * elsewhere between that load and this write would be overwritten — the same
+   * last-write-wins the endpoint already has, not something new here.
+   */
+  const toPayload = (rule: Rule, changes: Partial<RuleInput>): RuleInput => ({
+    domain: rule.domain,
+    upstreamUrl: rule.upstreamUrl,
+    enableTls: rule.enableTls,
+    enabled: rule.enabled,
+    allowedCidrs: rule.allowedCidrs,
+    deniedCidrs: rule.deniedCidrs,
+    rateLimitPerMinute: rule.rateLimitPerMinute,
+    basicAuthUsername: rule.basicAuthUsername,
+    ...changes,
   });
 
-  const handleToggleSSL = async (rule: ProxyRule, ssl: boolean) => {
-    await api.servers.rules.update(server.id, rule.id, toPayload(rule.domain, rule.proxyTo, ssl));
+  const handleToggleSSL = async (rule: Rule, enableTls: boolean) => {
+    await api.servers.rules.update(server.id, rule.id, toPayload(rule, { enableTls }));
     onUpdateServer(server); // triggers a reload of state from the API
   };
 
-  const handleSaveRule = async (ruleData: { domain: string, proxyTo: string, ssl: boolean }) => {
-    const payload = toPayload(ruleData.domain, ruleData.proxyTo, ruleData.ssl);
+  const handleSaveRule = async (ruleData: ProxyRuleFormData) => {
     if (modalState.rule) {
-      await api.servers.rules.update(server.id, modalState.rule.id, payload);
+      await api.servers.rules.update(server.id, modalState.rule.id, toPayload(modalState.rule, ruleData));
     } else {
-      await api.servers.rules.create(server.id, payload);
+      await api.servers.rules.create(server.id, { ...ruleData, enabled: true });
     }
     setModalState({ isOpen: false, rule: null });
     onUpdateServer(server);
@@ -96,10 +116,10 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                         >
                            <div>
                                 <p className="font-semibold text-on-surface">{rule.domain}</p>
-                                <p className="text-xs text-on-surface-muted">Proxy to: {rule.proxyTo}</p>
+                                <p className="text-xs text-on-surface-muted">Proxy to: {rule.upstreamUrl}</p>
                            </div>
                            <div onClick={e => e.stopPropagation()}>
-                             <ToggleSwitch enabled={rule.ssl} onChange={(enabled) => handleToggleSSL(rule, enabled)} label="SSL" disabled={!canManageRules} />
+                             <ToggleSwitch enabled={rule.enableTls} onChange={(enabled) => handleToggleSSL(rule, enabled)} label="SSL" disabled={!canManageRules} />
                            </div>
                         </div>
                     )) : (
