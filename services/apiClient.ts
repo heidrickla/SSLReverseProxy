@@ -22,9 +22,14 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
   const key = apiKeyStore.get();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...extraHeaders };
   if (key) headers['X-Api-Key'] = key;
 
   const res = await fetch(`${API_BASE}${path}`, {
@@ -78,6 +83,12 @@ export interface Rule {
   rateLimitPerMinute: number | null;
   basicAuthEnabled: boolean; basicAuthUsername: string | null;
   hardening: RuleHardening;
+  /**
+   * Optimistic-concurrency token. Pass it back on update/delete so an edit made
+   * from a stale copy is rejected rather than silently overwriting whoever
+   * wrote in between. The API sends the same value as an ETag.
+   */
+  version: number;
 }
 /**
  * Body for creating/updating a rule. Not Omit<Rule, ...>: the write shape and
@@ -109,6 +120,17 @@ export interface ApiCertificate { id: string; domain: string; issuer: string; st
 export interface ApiUser { id: string; name: string; email: string; role: string; isActive: boolean; lastSeenAt: string | null; }
 export interface ApiAuditEntry { id: number; timestamp: string; actor: string; action: string; targetType: string; targetName: string; success: boolean; sourceIp: string | null; }
 
+/** RFC 7232 entity-tag for a rule version. */
+const ifMatch = (version: number): Record<string, string> => ({ 'If-Match': `"${version}"` });
+
+/**
+ * True when a write was rejected because someone else got there first --
+ * 412 (the version we sent is stale) or 409 (we lost the race during the save).
+ * Either way the fix is the same: reload and reapply.
+ */
+export const isConcurrencyConflict = (e: unknown): boolean =>
+  e instanceof ApiError && (e.status === 412 || e.status === 409 || e.status === 428);
+
 export const api = {
   whoami: () => request<WhoAmI>('GET', '/api/whoami'),
 
@@ -137,14 +159,18 @@ export const api = {
       list: (serverId: string) => request<Rule[]>('GET', `/api/servers/${serverId}/rules`),
       create: (serverId: string, r: RuleInput) =>
         request<Rule>('POST', `/api/servers/${serverId}/rules`, r),
-      update: (serverId: string, ruleId: string, r: RuleInput) =>
-        request<Rule>('PUT', `/api/servers/${serverId}/rules/${ruleId}`, r),
-      toggle: (serverId: string, ruleId: string, enabled: boolean) =>
-        request<Rule>('PATCH', `/api/servers/${serverId}/rules/${ruleId}/enabled`, { enabled }),
+      // `version` is required: PUT replaces the whole rule, so the API refuses
+      // one that does not say which version it is replacing (428).
+      update: (serverId: string, ruleId: string, r: RuleInput, version: number) =>
+        request<Rule>('PUT', `/api/servers/${serverId}/rules/${ruleId}`, r, ifMatch(version)),
+      toggle: (serverId: string, ruleId: string, enabled: boolean, version?: number) =>
+        request<Rule>('PATCH', `/api/servers/${serverId}/rules/${ruleId}/enabled`, { enabled },
+          version === undefined ? undefined : ifMatch(version)),
       health: (serverId: string, ruleId: string) =>
         request<UpstreamHealth>('GET', `/api/servers/${serverId}/rules/${ruleId}/health`),
-      remove: (serverId: string, ruleId: string) =>
-        request<void>('DELETE', `/api/servers/${serverId}/rules/${ruleId}`),
+      remove: (serverId: string, ruleId: string, version?: number) =>
+        request<void>('DELETE', `/api/servers/${serverId}/rules/${ruleId}`, undefined,
+          version === undefined ? undefined : ifMatch(version)),
     },
   },
 

@@ -114,6 +114,153 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
         return server!.id;
     }
 
+    /// <summary>
+    /// Creates a rule and returns its id and current version. PUT requires the
+    /// version, so most tests need both.
+    /// </summary>
+    private async Task<(Guid Id, int Version)> NewRuleAsync(
+        HttpClient client, Guid serverId, string domain, object? hardening = null)
+    {
+        var resp = await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", new
+        {
+            domain,
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+            hardening,
+        });
+        resp.EnsureSuccessStatusCode();
+        var rule = await resp.Content.ReadFromJsonAsync<VersionedRule>();
+        return (rule!.id, rule.version);
+    }
+
+    private static HttpRequestMessage Put(string url, object body, int? version)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(body),
+        };
+        if (version is { } v) req.Headers.TryAddWithoutValidation("If-Match", $"\"{v}\"");
+        return req;
+    }
+
+    [Fact]
+    public async Task Put_WithoutIfMatch_IsRefused()
+    {
+        // Not merely unguarded-but-allowed: a caller that does not know about
+        // preconditions is the one whose blind overwrite this exists to stop.
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.40");
+        var (id, _) = await NewRuleAsync(client, serverId, "nomatch.example.com");
+
+        var resp = await client.SendAsync(Put($"/api/servers/{serverId}/rules/{id}", new
+        {
+            domain = "nomatch.example.com",
+            upstreamUrl = "http://10.0.0.20:8080",
+            enableTls = true,
+            enabled = true,
+        }, version: null));
+        Assert.Equal(HttpStatusCode.PreconditionRequired, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Put_WithStaleIfMatch_IsRefused_AndChangesNothing()
+    {
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.41");
+        var (id, v0) = await NewRuleAsync(client, serverId, "stale.example.com");
+
+        object Body(string upstream) => new
+        {
+            domain = "stale.example.com",
+            upstreamUrl = upstream,
+            enableTls = true,
+            enabled = true,
+        };
+
+        // First writer wins and moves the version on.
+        var first = await client.SendAsync(Put($"/api/servers/{serverId}/rules/{id}", Body("http://10.0.0.21:8080"), v0));
+        first.EnsureSuccessStatusCode();
+        var afterFirst = await first.Content.ReadFromJsonAsync<VersionedRule>();
+        Assert.Equal(v0 + 1, afterFirst!.version);
+        Assert.Equal($"\"{v0 + 1}\"", first.Headers.ETag?.ToString());
+
+        // Second writer still holds v0 — exactly the operator who would
+        // otherwise revert the first writer's change.
+        var second = await client.SendAsync(Put($"/api/servers/{serverId}/rules/{id}", Body("http://10.0.0.22:8080"), v0));
+        Assert.Equal(HttpStatusCode.PreconditionFailed, second.StatusCode);
+
+        var rules = await client.GetFromJsonAsync<VersionedRule[]>($"/api/servers/{serverId}/rules");
+        var current = rules!.Single(r => r.id == id);
+        Assert.Equal("http://10.0.0.21:8080", current.upstreamUrl); // first writer's value survived
+        Assert.Equal(v0 + 1, current.version);
+    }
+
+    [Fact]
+    public async Task Put_WithCurrentIfMatch_Succeeds_AndAdvancesTheVersion()
+    {
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.42");
+        var (id, v0) = await NewRuleAsync(client, serverId, "ok.example.com");
+
+        var resp = await client.SendAsync(Put($"/api/servers/{serverId}/rules/{id}", new
+        {
+            domain = "ok.example.com",
+            upstreamUrl = "http://10.0.0.23:8080",
+            enableTls = true,
+            enabled = true,
+        }, v0));
+        resp.EnsureSuccessStatusCode();
+        Assert.Equal(v0 + 1, (await resp.Content.ReadFromJsonAsync<VersionedRule>())!.version);
+    }
+
+    [Fact]
+    public async Task Put_WithWildcardIfMatch_Succeeds()
+    {
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.43");
+        var (id, _) = await NewRuleAsync(client, serverId, "wild.example.com");
+
+        var req = new HttpRequestMessage(HttpMethod.Put, $"/api/servers/{serverId}/rules/{id}")
+        {
+            Content = JsonContent.Create(new
+            {
+                domain = "wild.example.com",
+                upstreamUrl = "http://10.0.0.24:8080",
+                enableTls = true,
+                enabled = true,
+            }),
+        };
+        req.Headers.TryAddWithoutValidation("If-Match", "*");
+        var resp = await client.SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task ToggleAndDelete_HonourIfMatchWhenSent()
+    {
+        var client = Authed();
+        var serverId = await NewServerAsync(client, "10.0.0.44");
+        var (id, v0) = await NewRuleAsync(client, serverId, "opt.example.com");
+
+        // Optional, so no header is fine and it bumps the version.
+        var toggled = await client.PatchAsJsonAsync(
+            $"/api/servers/{serverId}/rules/{id}/enabled", new { enabled = false });
+        toggled.EnsureSuccessStatusCode();
+        Assert.Equal(v0 + 1, (await toggled.Content.ReadFromJsonAsync<VersionedRule>())!.version);
+
+        // ...but a stale one, once sent, is still enforced.
+        var stale = new HttpRequestMessage(HttpMethod.Delete, $"/api/servers/{serverId}/rules/{id}");
+        stale.Headers.TryAddWithoutValidation("If-Match", $"\"{v0}\"");
+        Assert.Equal(HttpStatusCode.PreconditionFailed, (await client.SendAsync(stale)).StatusCode);
+
+        var current = new HttpRequestMessage(HttpMethod.Delete, $"/api/servers/{serverId}/rules/{id}");
+        current.Headers.TryAddWithoutValidation("If-Match", $"\"{v0 + 1}\"");
+        Assert.Equal(HttpStatusCode.NoContent, (await client.SendAsync(current)).StatusCode);
+    }
+
+    private record VersionedRule(Guid id, string domain, string upstreamUrl, int version);
+
     [Fact]
     public async Task AdditionalUpstreams_AreSubjectToTheSameSsrfPolicy()
     {
@@ -172,13 +319,13 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
         var rule = await created.Content.ReadFromJsonAsync<RuleResult>();
 
         // Same rule, primary flipped to http, no `hardening` block at all.
-        var resp = await client.PutAsJsonAsync($"/api/servers/{serverId}/rules/{rule!.id}", new
+        var resp = await client.SendAsync(Put($"/api/servers/{serverId}/rules/{rule!.id}", new
         {
             domain = "drift.example.com",
             upstreamUrl = "http://10.0.0.20:8080",
             enableTls = true,
             enabled = true,
-        });
+        }, rule.version));
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
@@ -388,7 +535,7 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
 
     // --- response shapes ---
     private record IdName(Guid id, string name);
-    private record RuleResult(Guid id, bool enabled);
+    private record RuleResult(Guid id, bool enabled, int version);
     private record HardeningResult(
         string? additionalUpstreams, string? loadBalancePolicy, int? dialTimeoutSeconds,
         long? maxRequestBodyBytes, bool enableSecurityHeaders, int? hstsMaxAgeDays,

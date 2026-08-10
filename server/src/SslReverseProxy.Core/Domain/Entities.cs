@@ -177,6 +177,18 @@ public class ProxyRule
     /// </summary>
     public bool SkipAccessLog { get; set; }
 
+    /// <summary>
+    /// Optimistic concurrency token, incremented on every write and surfaced to
+    /// clients as an ETag. Without it two operators who both loaded a rule and
+    /// both saved would each write a whole rule from their own stale copy, and
+    /// the later save would silently undo the earlier one.
+    /// <para>
+    /// A counter rather than a timestamp: UpdatedAt is only as fine-grained as
+    /// the clock, so two writes in the same tick would compare equal.
+    /// </para>
+    /// </summary>
+    public int Version { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 

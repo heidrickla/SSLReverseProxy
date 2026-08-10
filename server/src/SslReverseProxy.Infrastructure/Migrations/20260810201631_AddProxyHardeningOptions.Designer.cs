@@ -11,7 +11,7 @@ using SslReverseProxy.Infrastructure.Persistence;
 namespace SslReverseProxy.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260810200312_AddProxyHardeningOptions")]
+    [Migration("20260810201631_AddProxyHardeningOptions")]
     partial class AddProxyHardeningOptions
     {
         /// <inheritdoc />
@@ -299,6 +299,10 @@ namespace SslReverseProxy.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("UpstreamWriteTimeoutSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");

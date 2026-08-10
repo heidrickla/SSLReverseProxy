@@ -126,6 +126,18 @@ Servers / rules
   | `hstsMaxAgeDays`, `hstsIncludeSubdomains`, `frameOptions` | Opt-in, and off by default because both can break a working site. HSTS cannot be recalled once a browser has seen it, and is suppressed on rules with TLS disabled. `includeSubDomains` is a separate opt-in again: on an apex domain it pins every sibling host to HTTPS for the whole max-age, including hosts this rule does not serve. |
   | `healthCheckPath`, `healthCheckIntervalSeconds`, `healthCheckTimeoutSeconds`, `healthCheckExpectStatus` | Caddy-native active health checking, so an unhealthy upstream is taken out of rotation between requests rather than only being visible in the control plane's own probe. `expectStatus` accepts a full code or a single digit for the whole class (`2` = any 2xx); left unset, Caddy's own 200-399 applies, which is what you want for a health endpoint that redirects. |
   | `skipAccessLog` | Keeps this host out of the access log. |
+- **Concurrent edits.** Each rule carries a `version`, returned in the body and as an `ETag`.
+  `PUT` **requires** `If-Match` and answers `428` without one, `412` when it is stale — a
+  full-replace built from a stale copy would otherwise silently revert whoever wrote in between.
+  `PATCH .../enabled` and `DELETE` accept it but do not require it, since losing that race costs
+  a toggle rather than an operator's edits. The check narrows the window without closing it, so a
+  write that loses the race during the save comes back `409`; either way the fix is reload,
+  reapply, retry.
+
+  ```bash
+  curl -X PUT .../rules/$ID -H 'If-Match: "3"' -H 'Content-Type: application/json' -d @rule.json
+  ```
+
 - `PATCH .../rules/{id}/enabled` — quick enable/disable toggle.
 - `GET .../rules/{id}/health` — probe the upstream (SSRF policy re-applied).
 
