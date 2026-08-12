@@ -1,3 +1,14 @@
+# CI for SSLReverseProxy -- the hermetic half of the checks.
+#
+# What runs here vs what does not:
+#   * here: build, unit + integration tests, frontend typecheck and build, a
+#     dependency CVE audit and a committed-secret guard. All hermetic -- no
+#     Caddy binary, no network, no credentials.
+#   * NOT here: CaddyBinaryValidationTests puts the generated config through a
+#     real `caddy validate`. It is opt-in on SSLRP_TEST_CADDY / caddy on PATH
+#     and NO-OPS on this runner, so CI green does not mean the emitted JSON is
+#     valid Caddy -- only that the code compiles and the assertions hold. Run
+#     the suite locally with a caddy binary before trusting a config change.
 name: CI
 
 on:
@@ -5,8 +16,33 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+  # The dependency audit is why this exists. Its INPUT barely moves -- a lock
+  # file changes only when someone bumps a package -- while the thing that DOES
+  # move is the advisory database. A purely push-triggered audit answers "were
+  # these clean when we last touched them", not "are they clean today". This
+  # repo has already collected seven Dependabot alerts against dependencies
+  # nobody edited, which is exactly the blind spot a schedule closes.
+  # 04:23 rather than the hour: GitHub queues scheduled workflows hardest on :00.
+  schedule:
+    - cron: "23 4 * * *"
+
+# Least privilege. Nothing here writes to the repo, publishes a package or
+# comments on a PR, so the token needs no scopes at all.
+permissions: {}
+
+# A newer push makes an in-flight run's answer irrelevant -- cancel it rather
+# than letting a stale result land after a fresher one. Keyed on ref so main and
+# each PR are independent.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # Job names are what branch protection matches on. RENAMING ONE IS THE SAME
+  # OUTAGE AS DELETING IT: protection keeps waiting for a check that will never
+  # report again. "Backend (.NET)" and "Frontend (React)" are unchanged from the
+  # original workflow for that reason, even though both now do more than before.
   backend:
     name: Backend (.NET)
     runs-on: ubuntu-latest
@@ -14,23 +50,95 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      # Actions pinned by commit SHA, not tag. A tag is mutable -- whoever
+      # controls the action can repoint v4 at new code, and it would run here
+      # with whatever permissions this workflow has. The trailing comment is the
+      # human-readable version; the SHA is what actually gets fetched.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.x'
       - run: dotnet restore
       - run: dotnet build --no-restore --configuration Release
       - run: dotnet test --no-build --configuration Release --verbosity normal
 
+      # Prove the detector can fail BEFORE trusting it to pass. The self-test
+      # feeds it fixtures with known answers and asserts it flags a critical
+      # finding, stays quiet on a clean document, and rejects a schema it has
+      # not been verified against.
+      #
+      # Deliberately synthetic rather than a live vulnerable package: a real
+      # advisory can be re-rated or withdrawn, which would make the probe's
+      # result depend on an external database rather than on this repo. The
+      # fixtures are deterministic; the live run below is the actual gate.
+      - name: Vulnerability detector self-test
+        working-directory: .
+        run: python3 .github/scripts/check_nuget_vulns.py --selftest
+
+      # BLOCKING at high/critical, and it starts green: verified against the
+      # tree on 2026-08-11 with no vulnerable packages. A gate that arrives red
+      # is a gate people learn to click past.
+      #
+      # `dotnet list package --vulnerable` EXITS 0 EVEN WHEN IT FINDS SOMETHING
+      # (verified against a deliberately vulnerable project), so the exit code
+      # cannot be the gate. Grepping the human-readable table fails OPEN -- a
+      # column change, a localised runner or an empty result all produce "no
+      # match", which is indistinguishable from "nothing vulnerable". The parser
+      # reads --format json and refuses documents it does not recognise.
+      #
+      # pipefail matters here: without it the pipeline would report the parser's
+      # status only, and a dotnet crash producing no output would sail through.
+      - name: Dependency CVEs (.NET, high+)
+        run: |
+          set -uo pipefail
+          dotnet list package --vulnerable --include-transitive --format json \
+            | python3 "$GITHUB_WORKSPACE/.github/scripts/check_nuget_vulns.py"
+
   frontend:
     name: Frontend (React)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run build
+
+      # BLOCKING at high/critical only, and it starts green (0 vulnerabilities
+      # on 2026-08-11 at every level).
+      #
+      # WHY NOT ALL LEVELS: a low-severity advisory published overnight against
+      # an untouched transitive dependency would block every PR until someone
+      # triaged it, with no defect in this repo. High and critical are worth
+      # stopping for; low and moderate are worth knowing about, which is what
+      # the advisory step below prints without failing.
+      - name: Dependency CVEs (npm, high+)
+        run: npm audit --audit-level=high
+      - name: Dependency advisories (all levels, advisory)
+        run: npm audit || true
+
+      # Folded in here rather than given its own job: it is a two-second
+      # `git ls-files | grep`, and a separate job would burn a full billable
+      # minute on VM boot and checkout to run it.
+      #
+      # Deliberately narrow -- it proves the material that must never be
+      # committed is absent, not that the repo holds nothing sensitive, which no
+      # grep can establish. Markdown is excluded because the docs legitimately
+      # quote key-shaped examples, and a guard that cries wolf gets ignored.
+      # Verified clean against the tree before being made blocking.
+      - name: No private keys or env files committed
+        run: |
+          set -euo pipefail
+          bad=0
+          keyfiles=$(git ls-files | grep -iE '(^|/)\.env$|\.pem$|\.p12$|\.pfx$|(^|/)id_(rsa|ed25519)$' || true)
+          if [ -n "$keyfiles" ]; then
+            echo "::error::a key or .env file is tracked in git"; echo "$keyfiles"; bad=1
+          fi
+          hits=$(git grep -lIE 'BEGIN (RSA|EC|OPENSSH|PGP|DSA) PRIVATE KEY' -- . ':!*.md' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::a private key block is committed"; echo "$hits"; bad=1
+          fi
+          exit $bad
