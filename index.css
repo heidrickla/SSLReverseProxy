@@ -1,3 +1,39 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  /* Tailwind 3's sans stack; 4.3 defaults to an -apple-system list. */
+  --font-sans: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+
+  --color-primary: rgb(var(--color-primary-rgb));
+  --color-secondary: rgb(var(--color-secondary-rgb));
+  --color-background: rgb(var(--color-background-rgb));
+  --color-surface: rgb(var(--color-surface-rgb));
+  --color-surface-raised: rgb(var(--color-surface-raised-rgb));
+  --color-on-surface: rgb(var(--color-on-surface-rgb));
+  --color-on-surface-muted: rgb(var(--color-on-surface-muted-rgb));
+  --color-border: rgb(var(--color-border-rgb));
+  --color-success: rgb(var(--color-success-rgb));
+  --color-warning: rgb(var(--color-warning-rgb));
+  --color-danger: rgb(var(--color-danger-rgb));
+}
+
+/* Tailwind 3 preflight defaults that Tailwind 4 dropped: gray-200 borders, gray-400 placeholders and a pointer cursor on buttons. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}

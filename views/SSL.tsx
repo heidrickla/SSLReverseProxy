@@ -121,7 +121,7 @@ const AddCertificateModal: React.FC<{
                                 {isGenericCloudflare && (
                                     <>
                                         <label className="flex items-center space-x-2 cursor-pointer text-sm text-on-surface-muted">
-                                            <input type="checkbox" checked={saveCredentials} onChange={e => setSaveCredentials(e.target.checked)} className="rounded border-border text-primary focus:ring-primary" />
+                                            <input type="checkbox" checked={saveCredentials} onChange={e => setSaveCredentials(e.target.checked)} className="rounded-sm border-border text-primary focus:ring-primary" />
                                             <span>Save these credentials in this browser</span>
                                         </label>
                                         {saveCredentials && (
@@ -198,8 +198,8 @@ const SSL: React.FC = () => {
 
     return (
         <>
-            <div className="space-y-6 h-full flex flex-col">
-                <div className="flex justify-between items-center flex-shrink-0">
+            <div className="gap-6 h-full flex flex-col">
+                <div className="flex justify-between items-center shrink-0">
                     <h2 className="text-xl font-semibold text-on-surface">Manage SSL Certificates</h2>
                     {canCreate && <Button onClick={() => setIsModalOpen(true)}>Add Certificate</Button>}
                 </div>
@@ -214,7 +214,7 @@ const SSL: React.FC = () => {
                       {expiringCerts.map(cert => {
                         const daysLeft = Math.ceil((new Date(cert.expiresAt).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
                         return (
-                          <div key={cert.id} className="flex justify-between items-center bg-surface p-3 rounded-md shadow">
+                          <div key={cert.id} className="flex justify-between items-center bg-surface p-3 rounded-md shadow-sm">
                             <div>
                               <p className="font-medium text-on-surface">{cert.domain}</p>
                               <p className="text-sm text-on-surface-muted">
@@ -229,7 +229,7 @@ const SSL: React.FC = () => {
                   </div>
                 )}
 
-                <div ref={scrollRef} className="bg-surface rounded-lg shadow-lg overflow-auto overscroll-contain flex-grow">
+                <div ref={scrollRef} className="bg-surface rounded-lg shadow-lg overflow-auto overscroll-contain grow">
                     <table className="min-w-full">
                         <thead className="bg-surface-raised sticky top-0">
                             <tr>

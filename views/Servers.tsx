@@ -97,11 +97,11 @@ const Servers: React.FC = () => {
     return (
         <>
             <div className="flex flex-col h-full">
-                <div className="flex justify-between items-center mb-6 flex-shrink-0">
+                <div className="flex justify-between items-center mb-6 shrink-0">
                     <h2 className="text-xl font-semibold text-on-surface">Servers</h2>
                     {canCreate && <Button onClick={() => setIsAddModalOpen(true)}>Add Server</Button>}
                 </div>
-                <div ref={scrollRef} className="bg-surface rounded-lg shadow-lg overflow-auto overscroll-contain flex-grow">
+                <div ref={scrollRef} className="bg-surface rounded-lg shadow-lg overflow-auto overscroll-contain grow">
                     <table className="min-w-full">
                         <thead className="bg-surface-raised sticky top-0">
                             <tr>

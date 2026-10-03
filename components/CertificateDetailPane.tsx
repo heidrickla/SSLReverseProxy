@@ -54,14 +54,14 @@ const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certifica
   return (
     <>
         <div
-            className="fixed inset-0 bg-black bg-opacity-60 z-30 animate-fade-in-fast"
+            className="fixed inset-0 bg-black/60 z-30 animate-fade-in-fast"
             onClick={onClose}
             aria-hidden="true"
         ></div>
 
         <aside className="fixed top-0 right-0 bottom-0 w-full max-w-lg bg-surface shadow-xl flex flex-col z-40 animate-slide-in-right">
-            <div className="p-6 flex flex-col flex-grow overflow-y-auto">
-                <div className="flex justify-between items-center mb-6 flex-shrink-0">
+            <div className="p-6 flex flex-col grow overflow-y-auto">
+                <div className="flex justify-between items-center mb-6 shrink-0">
                     <h3 className="text-xl font-semibold text-on-surface truncate" title={certificate.domain}>{certificate.domain}</h3>
                     <button onClick={onClose} className="text-on-surface-muted hover:text-on-surface">
                         <XIcon className="w-6 h-6" />
@@ -81,7 +81,7 @@ const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certifica
                 </div>
 
                 {(canCreate || canDelete) && (
-                    <div className="mt-auto pt-6 border-t border-border flex space-x-2 flex-shrink-0">
+                    <div className="mt-auto pt-6 border-t border-border flex space-x-2 shrink-0">
                         {canCreate && <Button variant="secondary" className="w-full">Renew Certificate</Button>}
                         {canDelete && <Button variant="danger" className="w-full" onClick={() => setIsDeleteConfirmOpen(true)}>Delete Certificate</Button>}
                     </div>

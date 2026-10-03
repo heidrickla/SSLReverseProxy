@@ -134,7 +134,7 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fade-in">
               <div className="bg-surface p-6 rounded-lg shadow-lg h-96 flex flex-col">
                   <h3 className="text-lg font-semibold text-on-surface mb-4">Requests (24h)</h3>
-                  <div className="flex-grow">
+                  <div className="grow">
                       <ResponsiveContainer width="100%" height="100%">
                           <AreaChart data={areaChartData}>
                               <defs>
@@ -154,7 +154,7 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
               </div>
               <div className="bg-surface p-6 rounded-lg shadow-lg h-96 flex flex-col">
                   <h3 className="text-lg font-semibold text-on-surface mb-4">HTTP Status Codes (24h)</h3>
-                  <div className="flex-grow">
+                  <div className="grow">
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                             <Pie

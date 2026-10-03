@@ -25,7 +25,7 @@ const Header: React.FC = () => {
 
   return (
     <>
-      <header className="flex justify-end items-center py-4 px-8 bg-surface shadow-md flex-shrink-0">
+      <header className="flex justify-end items-center py-4 px-8 bg-surface shadow-md shrink-0">
         <div className="flex items-center space-x-6">
           <button
             onClick={toggleMode}
@@ -38,7 +38,7 @@ const Header: React.FC = () => {
           <div className="relative">
             <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="flex items-center space-x-3">
               <span className="font-semibold text-on-surface hidden sm:inline">{currentUser.name}</span>
-              <div className="w-9 h-9 rounded-full flex-shrink-0 border-2 border-primary">
+              <div className="w-9 h-9 rounded-full shrink-0 border-2 border-primary">
                 <img
                   src={currentUser.avatar || defaultAvatar}
                   alt="User Avatar"

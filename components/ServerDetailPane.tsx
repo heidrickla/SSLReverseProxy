@@ -88,14 +88,14 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
   return (
     <>
         <div
-            className="fixed inset-0 bg-black bg-opacity-60 z-30 animate-fade-in-fast"
+            className="fixed inset-0 bg-black/60 z-30 animate-fade-in-fast"
             onClick={onClose}
             aria-hidden="true"
         ></div>
 
         <aside className="fixed top-0 right-0 bottom-0 w-full max-w-lg bg-surface shadow-xl flex flex-col z-40 animate-slide-in-right">
-            <div className="p-6 flex flex-col flex-grow overflow-y-auto">
-                <div className="flex justify-between items-center mb-6 flex-shrink-0">
+            <div className="p-6 flex flex-col grow overflow-y-auto">
+                <div className="flex justify-between items-center mb-6 shrink-0">
                     <h3 className="text-xl font-semibold text-on-surface">{server.name}</h3>
                     <button onClick={onClose} className="text-on-surface-muted hover:text-on-surface">
                         <XIcon className="w-6 h-6" />
@@ -109,7 +109,7 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                 </div>
 
                 <h4 className="text-lg font-semibold text-on-surface mb-4">Proxy Rules</h4>
-                <div ref={rulesScrollRef} className="flex-grow overflow-auto pr-2 space-y-3">
+                <div ref={rulesScrollRef} className="grow overflow-auto pr-2 space-y-3">
                     {server.rules.length > 0 ? server.rules.map(rule => (
                         <div
                             key={rule.id}
@@ -130,7 +130,7 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                 </div>
 
                  {canManageRules && (
-                    <div className="mt-4 flex-shrink-0">
+                    <div className="mt-4 shrink-0">
                         <Button onClick={() => setModalState({ isOpen: true, rule: null })} className="w-full" variant="secondary">
                             Add Proxy Rule
                         </Button>
@@ -138,7 +138,7 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                  )}
 
                 {canDelete && (
-                    <div className="mt-auto pt-6 border-t border-border flex space-x-2 flex-shrink-0">
+                    <div className="mt-auto pt-6 border-t border-border flex space-x-2 shrink-0">
                         <Button variant="danger" className="w-full" onClick={() => setIsDeleteConfirmOpen(true)}>Delete Server</Button>
                     </div>
                 )}

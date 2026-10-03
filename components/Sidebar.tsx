@@ -70,24 +70,24 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, se
       >
         <button
           onClick={() => setIsLogoEditorOpen(true)}
-          className="flex items-center justify-center h-20 border-b border-border flex-shrink-0 px-4 group hover:bg-surface-raised transition-colors w-full"
+          className="flex items-center justify-center h-20 border-b border-border shrink-0 px-4 group hover:bg-surface-raised transition-colors w-full"
           title="Edit Logo"
         >
           {customLogo ? (
             <img src={customLogo} alt="Custom Logo" className="w-10 h-10 rounded-md object-contain" />
           ) : (
-            <LogoIcon className="w-8 h-8 text-primary flex-shrink-0" />
+            <LogoIcon className="w-8 h-8 text-primary shrink-0" />
           )}
           {!isCollapsed && <span className="ml-3 text-xl font-bold text-on-surface truncate">ProxyAdmin</span>}
         </button>
         <nav className="flex-1 px-3 py-4 overflow-y-auto">
-          <NavItem view="dashboard" label="Dashboard" icon={<DashboardIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="proxy" label="Proxy" icon={<ActiveConnectionsIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="servers" label="Servers" icon={<ServerIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="ssl" label="SSL" icon={<LockIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="users" label="Users" icon={<UsersIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="audit-log" label="Audit Log" icon={<AuditLogIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="settings" label="Settings" icon={<SettingsIcon className="w-6 h-6 flex-shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="dashboard" label="Dashboard" icon={<DashboardIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="proxy" label="Proxy" icon={<ActiveConnectionsIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="servers" label="Servers" icon={<ServerIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="ssl" label="SSL" icon={<LockIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="users" label="Users" icon={<UsersIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="audit-log" label="Audit Log" icon={<AuditLogIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="settings" label="Settings" icon={<SettingsIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
         </nav>
         <div className="p-3 border-t border-border">
           <button
