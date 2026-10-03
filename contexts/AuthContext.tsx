@@ -15,6 +15,12 @@ const userFromWhoAmI = (w: { userId: string | null; name: string; role: string }
     lastLogin: new Date().toISOString(),
 });
 
+// One bootstrap claim per page load. StrictMode runs the auth effect twice in
+// dev and the backend answers a single claim, so a second request would 404.
+let bootstrapClaim: Promise<string> | null = null;
+const claimBootstrapKey = (): Promise<string> =>
+    (bootstrapClaim ??= api.bootstrapKey().then(({ apiKey }) => apiKey));
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [authReady, setAuthReady] = useState(false);
@@ -29,7 +35,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // Restore a session from a stored API key on load; with no stored key, try
     // to claim the first-run bootstrap key (dev-only, loopback-only) so a fresh
-    // install signs in without copying the key from the server log.
+    // install signs in without copying the key from the server log. A cancelled
+    // run writes nothing: under StrictMode it shares the key with the live run.
     useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -38,7 +45,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const who = await api.whoami();
                     if (!cancelled) setCurrentUser(userFromWhoAmI(who));
                 } catch {
-                    apiKeyStore.clear();
+                    if (!cancelled) apiKeyStore.clear();
                 }
             } else if (import.meta.env.DEV) {
                 // Dev builds only. The backend already refuses this outside
@@ -55,14 +62,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 // unreachable, not live - grepping the bundle for the path is a
                 // misleading way to check this gate.
                 try {
-                    const { apiKey } = await api.bootstrapKey();
+                    const apiKey = await claimBootstrapKey();
+                    if (cancelled) return;
                     apiKeyStore.set(apiKey);
                     const who = await api.whoami();
                     if (!cancelled) setCurrentUser(userFromWhoAmI(who));
                 } catch {
                     // No bootstrap key available (normal outside first run) or
                     // the API is down — fall through to the sign-in screen.
-                    apiKeyStore.clear();
+                    if (!cancelled) apiKeyStore.clear();
                 }
             }
             if (!cancelled) setAuthReady(true);
