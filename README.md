@@ -22,6 +22,24 @@ an append-only audit trail with config snapshots and one-call rollback.
 > app talks to it via [`services/apiClient.ts`](services/apiClient.ts) —
 > sign in with an API key (auto-claimed on a first dev run).
 
+## Screenshots
+
+Screenshots show the application with sample API responses, example domains, and documentation IP addresses. Dashboard charts and performance figures are illustrative.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+| Proxy control | Servers |
+| --- | --- |
+| ![Proxy control](docs/screenshots/proxy-control.png) | ![Servers](docs/screenshots/servers.png) |
+
+| Proxy rules | SSL certificates |
+| --- | --- |
+| ![Proxy rules](docs/screenshots/proxy-rules.png) | ![SSL certificates](docs/screenshots/certificates.png) |
+
+| Users | Audit log |
+| --- | --- |
+| ![Users](docs/screenshots/users.png) | ![Audit log](docs/screenshots/audit-log.png) |
+
 ## Run Locally
 
 **Frontend** (prerequisite: Node.js 22.12 or later)
