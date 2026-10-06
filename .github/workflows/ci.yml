@@ -27,8 +27,8 @@ on:
   schedule:
     - cron: "23 4 * * *"
 
-# Least privilege. Nothing here writes to the repo, publishes a package or
-# comments on a PR, so the token needs no scopes at all.
+# Least privilege: no scopes. The one exception is audit-heal, which commits
+# npm's own audit fix to the branch it ran on.
 permissions: {}
 
 # A newer push makes an in-flight run's answer irrelevant -- cancel it rather
@@ -116,7 +116,11 @@ jobs:
       # triaged it, with no defect in this repo. High and critical are worth
       # stopping for; low and moderate are worth knowing about, which is what
       # the advisory step below prints without failing.
+      #
+      # On push and PR only. Scheduled and manual runs gate through audit-heal,
+      # which takes npm's fix where one exists and fails where none does.
       - name: Dependency CVEs (npm, high+)
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         run: npm audit --audit-level=high
       - name: Dependency advisories (all levels, advisory)
         run: npm audit || true
@@ -143,3 +147,41 @@ jobs:
             echo "::error::a private key block is committed"; echo "$hits"; bad=1
           fi
           exit $bad
+
+  # The npm high+ gate for scheduled and manual runs. A new advisory that npm can
+  # fix is fixed and committed here, so it never reaches the inbox as a failure;
+  # one it cannot fix (no patched release) still fails the run.
+  audit-heal:
+    name: Dependency CVEs (npm, high+, self-fixing)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Audit, and commit npm's fix when it clears the gate
+        run: |
+          set -euo pipefail
+          if npm audit --audit-level=high; then exit 0; fi
+          ids=$( (npm audit --json || true) | jq -r '[.vulnerabilities[].via[] | objects
+            | select(.severity == "high" or .severity == "critical") | .url | sub(".*/"; "")] | unique | join(", ")')
+          npm audit fix
+          # npm's fix may touch the manifest and the lock file, nothing else
+          changed=$(git diff --name-only)
+          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvxE 'package(-lock)?\.json'; then
+            echo "::error::npm audit fix changed: ${changed:-nothing}"; exit 1
+          fi
+          npm audit --audit-level=high
+          npx tsc --noEmit
+          npm test
+          npm run build
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "Take npm's audit fix for ${ids:-the high advisories}"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          echo "::notice::committed npm's audit fix for ${ids:-the high advisories} to ${GITHUB_REF_NAME}"
