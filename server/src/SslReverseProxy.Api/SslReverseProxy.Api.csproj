@@ -14,6 +14,8 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <!-- Design-time only (EF Core Design's MSBuild tooling pulls Pkcs 9.0.0): pin the patched release. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
