@@ -28,7 +28,7 @@ Exit codes: 0 nothing at or above the threshold, 1 findings, 2 unusable input.
 import json
 import sys
 
-# Matches the npm gate in the same workflow. Low and moderate advisories against
+# Matches the bun audit gate in the same workflow. Low and moderate advisories against
 # untouched transitive dependencies would otherwise block every PR with no
 # defect in this repo; they are reported, not enforced.
 BLOCKING = {"high", "critical"}

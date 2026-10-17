@@ -28,7 +28,7 @@ on:
     - cron: "23 4 * * *"
 
 # Least privilege: no scopes. The one exception is audit-heal, which commits
-# npm's own audit fix to the branch it ran on.
+# bun's own audit fix to the branch it ran on.
 permissions: {}
 
 # A newer push makes an in-flight run's answer irrelevant -- cancel it rather
@@ -99,14 +99,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Node runs Vitest and Vite: the suite needs Node 22.12 or later and does not run under Bun's
+      # runtime. Bun installs the packages, runs the scripts and audits.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-          cache: npm
-      - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm test
-      - run: npm run build
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+      - run: bun run test
+      - run: bun run build
 
       # BLOCKING at high/critical only, and it starts green (0 vulnerabilities
       # on 2026-08-11 at every level).
@@ -118,12 +122,12 @@ jobs:
       # the advisory step below prints without failing.
       #
       # On push and PR only. Scheduled and manual runs gate through audit-heal,
-      # which takes npm's fix where one exists and fails where none does.
-      - name: Dependency CVEs (npm, high+)
+      # which takes bun's fix where one exists and fails where none does.
+      - name: Dependency CVEs (bun, high+)
         if: github.event_name == 'push' || github.event_name == 'pull_request'
-        run: npm audit --audit-level=high
+        run: bun audit --audit-level=high
       - name: Dependency advisories (all levels, advisory)
-        run: npm audit || true
+        run: bun audit || true
 
       # Folded in here rather than given its own job: it is a two-second
       # `git ls-files | grep`, and a separate job would burn a full billable
@@ -148,9 +152,11 @@ jobs:
           fi
           exit $bad
 
-  # The npm high+ gate for scheduled and manual runs. A new advisory that npm can
-  # fix is fixed and committed here, so it never reaches the inbox as a failure;
-  # one it cannot fix (no patched release) still fails the run.
+  # The high+ gate for scheduled and manual runs, on the npm registry's advisories
+  # (the job name keeps "npm" for that, and so that nothing matching on it breaks).
+  # A new advisory that bun can fix within the declared ranges is fixed and
+  # committed here, so it never reaches the inbox as a failure; one it cannot fix
+  # (no patched release in range) still fails the run.
   audit-heal:
     name: Dependency CVEs (npm, high+, self-fixing)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -159,29 +165,35 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Node runs Vitest and Vite: the suite needs Node 22.12 or later and does not run under Bun's
+      # runtime. Bun installs the packages, runs the scripts and audits.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-          cache: npm
-      - run: npm ci
-      - name: Audit, and commit npm's fix when it clears the gate
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - name: Audit, and commit bun's fix when it clears the gate
         run: |
           set -euo pipefail
-          if npm audit --audit-level=high; then exit 0; fi
-          ids=$( (npm audit --json || true) | jq -r '[.vulnerabilities[].via[] | objects
+          if bun audit --audit-level=high; then exit 0; fi
+          # --json prints the registry's advisories keyed by package
+          ids=$( (bun audit --json || true) | jq -r '[.[][]
             | select(.severity == "high" or .severity == "critical") | .url | sub(".*/"; "")] | unique | join(", ")')
-          npm audit fix
-          # npm's fix may touch the manifest and the lock file, nothing else
+          # the high+ audit below is the gate, not the fix's own exit status
+          bun audit fix || true
+          # bun's fix may touch the manifest and the lock file, nothing else
           changed=$(git diff --name-only)
-          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvxE 'package(-lock)?\.json'; then
-            echo "::error::npm audit fix changed: ${changed:-nothing}"; exit 1
+          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvxE 'package\.json|bun\.lock'; then
+            echo "::error::bun audit fix changed: ${changed:-nothing}"; exit 1
           fi
-          npm audit --audit-level=high
-          npx tsc --noEmit
-          npm test
-          npm run build
+          bun audit --audit-level=high
+          bunx tsc --noEmit
+          bun run test
+          bun run build
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -qam "Take npm's audit fix for ${ids:-the high advisories}"
+          git commit -qam "Take bun's audit fix for ${ids:-the high advisories}"
           git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
-          echo "::notice::committed npm's audit fix for ${ids:-the high advisories} to ${GITHUB_REF_NAME}"
+          echo "::notice::committed bun's audit fix for ${ids:-the high advisories} to ${GITHUB_REF_NAME}"

@@ -42,12 +42,12 @@ Screenshots show the application with sample API responses, example domains, and
 
 ## Run Locally
 
-**Frontend** (prerequisite: Node.js 22.12 or later)
+**Frontend** (prerequisites: Bun 1.4 and Node.js 22.12 or later)
 
-1. `npm install`
-2. `npm run dev` — or `npm run build && npm run preview` for a production build
+1. `bun install`
+2. `bun run dev` — or `bun run build && bun run preview` for a production build
    (which injects the Content-Security-Policy).
-3. `npm test` runs the Vitest suite.
+3. `bun run test` runs the Vitest suite.
 
 **Backend** (prerequisite: .NET 10 SDK)
 

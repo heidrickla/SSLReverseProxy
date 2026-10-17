@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // Content-Security-Policy applied to the production build only. The dev server
-// (npm run dev) needs inline scripts for React Fast Refresh / HMR, so we do not
+// (bun run dev) needs inline scripts for React Fast Refresh / HMR, so we do not
 // inject the strict policy there. In production this should ideally also be sent
 // as an HTTP response header by the serving proxy/backend for defense in depth.
 const productionCsp = [
