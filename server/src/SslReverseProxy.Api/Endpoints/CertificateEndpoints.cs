@@ -48,7 +48,7 @@ public static class CertificateEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertRead));
 
         certs.MapPost("/", async (
-            CreateCertificateRequest req, AppDbContext db, IProxyController proxy, ICertificateChecks checks,
+            CreateCertificateRequest req, AppDbContext db, ProxyChanges changes, ICertificateChecks checks,
             IOptions<ProxyOptions> options, TimeProvider clock, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
             if (CertificateNames.Problem(req.Domain) is { } nameProblem)
@@ -59,6 +59,7 @@ public static class CertificateEndpoints
             var domain = CertificateNames.Normalize(req.Domain);
             if (ChallengeProblem(domain, challenge, options.Value) is { } challengeProblem)
                 return Invalid("challenge", challengeProblem);
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             if (await db.Certificates.AnyAsync(c => c.Domain == domain, ctx.RequestAborted))
                 return Results.Conflict(new { message = $"{domain} already has a certificate row." });
 
@@ -79,7 +80,7 @@ public static class CertificateEndpoints
                 return Results.Conflict(new { message = $"{domain} already has a certificate row." });
             }
 
-            var status = await ApplyIfRunningAsync(db, proxy, ctx.RequestAborted);
+            var status = await ApplyIfRunningAsync(db, change, ctx.RequestAborted);
             checks.RequestCheck();
             await audit.AuditAsync(me, ctx, "Register Certificate", "Certificate", cert.Domain,
                 details: $"challenge={challenge}{ApplyNote(status)}");
@@ -87,9 +88,10 @@ public static class CertificateEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertWrite));
 
         certs.MapPut("/{id:guid}", async (
-            Guid id, UpdateCertificateRequest req, AppDbContext db, IProxyController proxy, ICertificateChecks checks,
+            Guid id, UpdateCertificateRequest req, AppDbContext db, ProxyChanges changes, ICertificateChecks checks,
             IOptions<ProxyOptions> options, TimeProvider clock, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             var cert = await db.Certificates.FirstOrDefaultAsync(c => c.Id == id, ctx.RequestAborted);
             if (cert is null) return Results.NotFound();
             if (!TryChallenge(req.Challenge, out var challenge))
@@ -99,7 +101,7 @@ public static class CertificateEndpoints
 
             cert.Challenge = challenge;
             await db.SaveChangesAsync(ctx.RequestAborted);
-            var status = await ApplyIfRunningAsync(db, proxy, ctx.RequestAborted);
+            var status = await ApplyIfRunningAsync(db, change, ctx.RequestAborted);
             checks.RequestCheck();
             await audit.AuditAsync(me, ctx, "Update Certificate", "Certificate", cert.Domain,
                 details: $"challenge={challenge}{ApplyNote(status)}");
@@ -109,15 +111,17 @@ public static class CertificateEndpoints
         // Forced renewal. The config marks the name due for renewal, Caddy reissues it in place at its next
         // maintenance pass, and the certificate monitor drops the mark once a new serial is served.
         certs.MapPost("/{id:guid}/renew", async (
-            Guid id, AppDbContext db, IProxyController proxy, ICertificateChecks checks, ICertificateProbe probe,
+            Guid id, AppDbContext db, ProxyChanges changes, ICertificateChecks checks, ICertificateProbe probe,
             IOptions<ProxyOptions> options, TimeProvider clock, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
             var ct = ctx.RequestAborted;
+            // The mark is read, set and pushed in one scope: a second request sees it, and a rollback waits.
+            using var change = await changes.EnterAsync(ct);
             var cert = await db.Certificates.FirstOrDefaultAsync(c => c.Id == id, ct);
             if (cert is null) return Results.NotFound();
             if (!checks.Enabled)
                 return Refused("The certificate monitor is off (Proxy:CertificateCheckSeconds is 0), and a forced renewal needs it to finish.");
-            if ((await proxy.GetStatusAsync(ct)).State != ProxyState.Running)
+            if ((await change.StatusAsync(ct)).State != ProxyState.Running)
                 return Refused("The proxy is stopped; start it first.");
             if (cert.RenewFromSerial is not null)
                 return Refused($"A renewal of {cert.Domain} is already in progress.");
@@ -136,7 +140,7 @@ public static class CertificateEndpoints
             cert.RenewFromSerial = served.Serial;
             await db.SaveChangesAsync(ct);
 
-            var status = await proxy.ApplyConfigurationAsync(await db.LoadProxyPlanAsync(ct), ct);
+            var status = await change.ApplyAsync(await db.LoadProxyPlanAsync(ct), ct);
             if (status.State != ProxyState.Running)
             {
                 cert.RenewRequestedAt = previous;
@@ -155,15 +159,16 @@ public static class CertificateEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertWrite));
 
         certs.MapDelete("/{id:guid}", async (
-            Guid id, AppDbContext db, IProxyController proxy, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
+            Guid id, AppDbContext db, ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             var cert = await db.Certificates.FindAsync([id], ctx.RequestAborted);
             if (cert is null) return Results.NotFound();
             if (cert.Source == CertificateSource.Rule)
                 return Refused($"{cert.Domain} is a TLS rule's host; its row goes when no TLS rule names the host.");
             db.Certificates.Remove(cert);
             await db.SaveChangesAsync(ctx.RequestAborted);
-            var status = await ApplyIfRunningAsync(db, proxy, ctx.RequestAborted);
+            var status = await ApplyIfRunningAsync(db, change, ctx.RequestAborted);
             await audit.AuditAsync(me, ctx, "Delete Certificate", "Certificate", cert.Domain, details: ApplyNote(status));
             return Results.NoContent();
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertWrite));
@@ -191,10 +196,10 @@ public static class CertificateEndpoints
     }
 
     /// <summary>Applies the stored plan when the proxy runs. A stopped proxy picks it up when started.</summary>
-    private static async Task<ProxyStatus?> ApplyIfRunningAsync(AppDbContext db, IProxyController proxy, CancellationToken ct)
+    private static async Task<ProxyStatus?> ApplyIfRunningAsync(AppDbContext db, ProxyChanges.Scope change, CancellationToken ct)
     {
-        if ((await proxy.GetStatusAsync(ct)).State != ProxyState.Running) return null;
-        return await proxy.ApplyConfigurationAsync(await db.LoadProxyPlanAsync(ct), ct);
+        if ((await change.StatusAsync(ct)).State != ProxyState.Running) return null;
+        return await change.ApplyAsync(await db.LoadProxyPlanAsync(ct), ct);
     }
 
     private static string? ApplyNote(ProxyStatus? status) => status switch

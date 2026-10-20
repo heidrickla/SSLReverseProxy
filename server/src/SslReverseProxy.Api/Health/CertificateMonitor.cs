@@ -13,7 +13,8 @@ namespace SslReverseProxy.Api.Health;
 /// TLS rule's host and drops rule rows whose host no rule names, reads the certificate served for each
 /// name over SNI, and takes errors from Caddy's log. It also ends forced renewals: once a new serial is
 /// served, or after <see cref="ProxyOptions.RenewTimeoutMinutes"/>, the forcing policy is removed by
-/// applying the config again.
+/// applying the config again. Readings are taken outside <see cref="ProxyChanges"/>; the rows they are
+/// applied to are read again inside it.
 /// </summary>
 public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
 {
@@ -22,7 +23,7 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
 
     private readonly IServiceScopeFactory _scopes;
     private readonly IHostApplicationLifetime _lifetime;
-    private readonly IProxyController _proxy;
+    private readonly ProxyChanges _changes;
     private readonly ICertificateProbe _probe;
     private readonly CaddyCertificateLog _log;
     private readonly IEventStream _events;
@@ -31,19 +32,17 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
     private readonly ProxyOptions _options;
     private readonly ILogger<CertificateMonitor> _logger;
     private readonly TimeSpan _interval;
-    // A forced renewal ended but Caddy has not taken the config without its policy; retried each cycle.
-    private bool _reapplyPending;
     private readonly Channel<bool> _wake =
         Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
 
     public CertificateMonitor(
-        IServiceScopeFactory scopes, IHostApplicationLifetime lifetime, IProxyController proxy,
+        IServiceScopeFactory scopes, IHostApplicationLifetime lifetime, ProxyChanges changes,
         ICertificateProbe probe, CaddyCertificateLog log, IEventStream events, IAlertSink alerts, TimeProvider clock,
         IOptions<ProxyOptions> options, ILogger<CertificateMonitor> logger)
     {
         _scopes = scopes;
         _lifetime = lifetime;
-        _proxy = proxy;
+        _changes = changes;
         _probe = probe;
         _log = log;
         _events = events;
@@ -105,21 +104,30 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
         await started.Task;
     }
 
-    /// <summary>One cycle. Returns whether a forced renewal is still waiting, which shortens the next wait.</summary>
+    /// <summary>One cycle. Returns whether a forced renewal or a cleanup is still waiting, which shortens the next wait.</summary>
     internal async Task<bool> CheckAllAsync(CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var running = (await _proxy.GetStatusAsync(ct)).State == ProxyState.Running;
 
-        var configured = await SyncRuleRowsAsync(db, ct);
-        var certs = await db.Certificates.ToListAsync(ct);
+        bool running;
+        HashSet<string> configured;
+        using (var sync = await _changes.EnterAsync(ct))
+        {
+            running = (await sync.StatusAsync(ct)).State == ProxyState.Running;
+            configured = await SyncRuleRowsAsync(db, ct);
+        }
+        db.ChangeTracker.Clear();
+        var names = await db.Certificates.AsNoTracking().Select(c => new { c.Id, c.Domain }).ToListAsync(ct);
 
+        // Each probe can take seconds, so readings are taken outside the scope. A renewal requested after
+        // readAt is judged by a later cycle's readings, never by these.
+        var readAt = _clock.GetUtcNow();
         var probed = new Dictionary<Guid, ServedCertificate?>();
         if (running)
         {
             using var throttle = new SemaphoreSlim(MaxConcurrentProbes);
-            var reads = await Task.WhenAll(certs.Where(c => configured.Contains(c.Domain)).Select(async c =>
+            var reads = await Task.WhenAll(names.Where(c => configured.Contains(c.Domain)).Select(async c =>
             {
                 await throttle.WaitAsync(ct);
                 try { return (c.Id, Reading: await _probe.ReadAsync(c.Domain, ct)); }
@@ -128,15 +136,17 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
             foreach (var (id, reading) in reads) probed[id] = reading;
         }
 
+        using var change = await _changes.EnterAsync(ct);
+        var certs = await db.Certificates.ToListAsync(ct);
         var now = _clock.GetUtcNow();
-        var reapply = false;
+        var renewalEnded = false;
         var events = new List<ProxyEvent>();
         var alerts = new List<Alert>();
         foreach (var cert in certs)
         {
             var before = cert.Status;
             var checkedNow = probed.TryGetValue(cert.Id, out var reading);
-            reapply |= Update(cert, checkedNow, reading, now, events);
+            renewalEnded |= Update(cert, checkedNow, reading, readAt, now, events);
             // Only a fresh reading alerts; a stored status can be days old.
             if (checkedNow && CertificateAlerts.Evaluate(cert, now) is { } alert)
                 alerts.Add(alert);
@@ -160,17 +170,17 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
         foreach (var a in alerts) _alerts.Raise(a);
 
         // A stopped proxy holds no policy, and its next start builds the config from the rows.
-        _reapplyPending = running && (_reapplyPending || reapply);
-        if (_reapplyPending)
+        if ((renewalEnded || change.PolicyStale) && (await change.StatusAsync(ct)).State == ProxyState.Running)
         {
-            var status = await _proxy.ApplyConfigurationAsync(await db.LoadProxyPlanAsync(ct), ct);
-            if (status.State == ProxyState.Running)
-                _reapplyPending = false;
-            else
+            var status = await change.ApplyAsync(await db.LoadProxyPlanAsync(ct), ct);
+            if (status.State != ProxyState.Running)
+            {
+                change.PolicyLeftBehind();
                 _logger.LogWarning("Could not apply the config after a forced renewal ended; retrying: {Message}", status.Message);
+            }
         }
 
-        return _reapplyPending || certs.Any(c => c.RenewFromSerial is not null);
+        return change.PolicyStale || certs.Any(c => c.RenewFromSerial is not null);
     }
 
     /// <summary>
@@ -216,15 +226,20 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
         return configured;
     }
 
-    /// <summary>Applies one check to a row. Returns whether the config has to be applied again.</summary>
-    private bool Update(Certificate cert, bool checkedNow, ServedCertificate? served, DateTimeOffset now, List<ProxyEvent> events)
+    /// <summary>
+    /// Applies one reading, taken from <paramref name="readAt"/>, to a row. Returns whether a forced
+    /// renewal ended, so the config has to be applied again.
+    /// </summary>
+    private bool Update(Certificate cert, bool checkedNow, ServedCertificate? served, DateTimeOffset readAt, DateTimeOffset now,
+        List<ProxyEvent> events)
     {
         var reapply = false;
         var match = served is { MatchesName: true } ? served : null;
 
         if (cert.RenewFromSerial is not null && cert.RenewRequestedAt is { } requested)
         {
-            if (match is not null && !string.Equals(match.Serial, cert.RenewFromSerial, StringComparison.OrdinalIgnoreCase))
+            if (match is not null && readAt >= requested
+                && !string.Equals(match.Serial, cert.RenewFromSerial, StringComparison.OrdinalIgnoreCase))
             {
                 cert.RenewFromSerial = null;
                 reapply = true;

@@ -64,14 +64,15 @@ public static class ProxyEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
 
         group.MapPost("/start", async (
-            IProxyController proxy, AppDbContext db, IAuditLog audit, IEventStream events,
+            IProxyController proxy, ProxyChanges changes, AppDbContext db, IAuditLog audit, IEventStream events,
             ICertificateChecks certificates, ICurrentPrincipal me, HttpContext ctx) =>
         {
-            var status = await proxy.StartAsync(ctx.RequestAborted);
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
+            var status = await change.StartAsync(ctx.RequestAborted);
             if (status.State == ProxyState.Running)
             {
                 var plan = await db.LoadProxyPlanAsync(ctx.RequestAborted);
-                status = await proxy.ApplyConfigurationAsync(plan, ctx.RequestAborted);
+                status = await change.ApplyAsync(plan, ctx.RequestAborted);
                 await CaptureSnapshotAsync(db, proxy, plan, me.Name, "start", ctx.RequestAborted);
                 certificates.RequestCheck();
             }
@@ -82,9 +83,10 @@ public static class ProxyEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
 
         group.MapPost("/stop", async (
-            IProxyController proxy, IAuditLog audit, IEventStream events, ICurrentPrincipal me, HttpContext ctx) =>
+            ProxyChanges changes, IAuditLog audit, IEventStream events, ICurrentPrincipal me, HttpContext ctx) =>
         {
-            var status = await proxy.StopAsync(ctx.RequestAborted);
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
+            var status = await change.StopAsync(ctx.RequestAborted);
             await audit.AuditAsync(me, ctx, "Proxy Stop", "Proxy", status.Engine,
                 success: status.State is ProxyState.Stopped, details: status.Message);
             events.Publish(new ProxyEvent("proxy.stop", $"state={status.State}", DateTimeOffset.UtcNow, me.Name));
@@ -92,11 +94,12 @@ public static class ProxyEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
 
         group.MapPost("/reload", async (
-            IProxyController proxy, AppDbContext db, IAuditLog audit, IEventStream events,
+            IProxyController proxy, ProxyChanges changes, AppDbContext db, IAuditLog audit, IEventStream events,
             ICertificateChecks certificates, ICurrentPrincipal me, HttpContext ctx) =>
         {
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             var plan = await db.LoadProxyPlanAsync(ctx.RequestAborted);
-            var status = await proxy.ApplyConfigurationAsync(plan, ctx.RequestAborted);
+            var status = await change.ApplyAsync(plan, ctx.RequestAborted);
             if (status.State == ProxyState.Running)
             {
                 await CaptureSnapshotAsync(db, proxy, plan, me.Name, "reload", ctx.RequestAborted);
@@ -115,13 +118,15 @@ public static class ProxyEndpoints
             .RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
 
         group.MapPost("/rollback", async (
-            RollbackRequest req, IProxyController proxy, AppDbContext db, IAuditLog audit,
+            RollbackRequest req, ProxyChanges changes, AppDbContext db, IAuditLog audit,
             IEventStream events, ICurrentPrincipal me, HttpContext ctx) =>
         {
             var snap = await db.ConfigSnapshots.FindAsync([req.SnapshotId], ctx.RequestAborted);
             if (snap is null) return Results.NotFound(new { message = "Snapshot not found." });
 
-            var status = await proxy.ApplyRawConfigAsync(snap.ConfigJson, ctx.RequestAborted);
+            // The push and the cleared marks land together, so no renewal or cleanup push falls between them.
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
+            var status = await change.ApplyRawAsync(snap.ConfigJson, ctx.RequestAborted);
             var ok = status.State == ProxyState.Running;
             if (ok)
             {

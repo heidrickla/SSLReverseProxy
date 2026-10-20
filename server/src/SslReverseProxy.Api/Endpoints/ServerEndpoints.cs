@@ -5,6 +5,7 @@ using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
 using SslReverseProxy.Core.Security;
 using SslReverseProxy.Infrastructure.Persistence;
+using SslReverseProxy.Infrastructure.Proxy;
 
 namespace SslReverseProxy.Api.Endpoints;
 
@@ -70,7 +71,7 @@ public static class ServerEndpoints
 
         servers.MapPost("/{serverId:guid}/rules", async (
             Guid serverId, CreateRuleRequest req, AppDbContext db, ProxyTargetValidator validator,
-            IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
+            ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
             if (!await db.Servers.AnyAsync(s => s.Id == serverId, ctx.RequestAborted))
                 return Results.NotFound();
@@ -96,6 +97,7 @@ public static class ServerEndpoints
             ApplyHardening(rule, req.Hardening);
             ApplyRouting(rule, req.Routing);
             if (PlaceholderProblem(rule) is { } braced) return braced;
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             if (await ConflictProblemAsync(db, rule, ctx.RequestAborted) is { } clash) return clash;
             db.Rules.Add(rule);
             await db.SaveChangesAsync(ctx.RequestAborted);
@@ -106,7 +108,7 @@ public static class ServerEndpoints
 
         servers.MapPut("/{serverId:guid}/rules/{ruleId:guid}", async (
             Guid serverId, Guid ruleId, UpdateRuleRequest req, AppDbContext db, ProxyTargetValidator validator,
-            IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
+            ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
             var rule = await db.Rules.FirstOrDefaultAsync(r => r.Id == ruleId && r.ServerId == serverId, ctx.RequestAborted);
             if (rule is null) return Results.NotFound();
@@ -139,6 +141,7 @@ public static class ServerEndpoints
             ApplyRouting(rule, req.Routing);
             // Checked on the row as it will be saved; the request scope discards it on refusal.
             if (PlaceholderProblem(rule) is { } braced) return braced;
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             if (await ConflictProblemAsync(db, rule, ctx.RequestAborted) is { } clash) return clash;
             rule.UpdatedAt = DateTimeOffset.UtcNow;
             rule.Version++;
@@ -157,7 +160,7 @@ public static class ServerEndpoints
         // Quick enable/disable toggle without a full update.
         servers.MapPatch("/{serverId:guid}/rules/{ruleId:guid}/enabled", async (
             Guid serverId, Guid ruleId, ToggleRuleRequest req, AppDbContext db,
-            IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
+            ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
             var rule = await db.Rules.FirstOrDefaultAsync(r => r.Id == ruleId && r.ServerId == serverId, ctx.RequestAborted);
             if (rule is null) return Results.NotFound();
@@ -169,6 +172,7 @@ public static class ServerEndpoints
                 return precondition;
 
             rule.Enabled = req.Enabled;
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             if (await ConflictProblemAsync(db, rule, ctx.RequestAborted) is { } clash) return clash;
             rule.UpdatedAt = DateTimeOffset.UtcNow;
             rule.Version++;
@@ -343,7 +347,8 @@ public static class ServerEndpoints
 
     /// <summary>
     /// A rule may not share a host and path with another enabled rule, nor differ from its host's TLS
-    /// setting. 400 rather than 409: the UI reads 409 as a lost race and offers a reload.
+    /// setting. 400 rather than 409: the UI reads 409 as a lost race and offers a reload. Call it inside a
+    /// <see cref="ProxyChanges"/> scope held until the rule is saved, so two writers cannot both pass.
     /// </summary>
     private static async Task<IResult?> ConflictProblemAsync(AppDbContext db, ProxyRule rule, CancellationToken ct)
     {

@@ -53,6 +53,7 @@ public static class DependencyInjection
         services.AddSingleton<CaddyCertificateLog>();
         services.AddSingleton<ICertificateProbe, TlsCertificateProbe>();
         services.AddSingleton<IProxyController, CaddyProxyController>();
+        services.AddSingleton<ProxyChanges>();
         services.AddSingleton<IEventStream, EventStream>();
         services.AddScoped<IUpstreamHealthChecker, UpstreamHealthChecker>();
 

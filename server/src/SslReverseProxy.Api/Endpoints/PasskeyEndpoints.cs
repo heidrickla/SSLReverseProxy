@@ -45,12 +45,13 @@ public static class PasskeyEndpoints
         }).AllowAnonymous().RequireRateLimiting(OptionsLimit);
 
         auth.MapPost("/passkey", async (
-            JsonElement body, IFido2 fido2, PasskeyChallenges challenges, IOptions<PasskeyOptions> o,
+            IFido2 fido2, PasskeyChallenges challenges, IOptions<PasskeyOptions> o,
             AppDbContext db, IAuditLog audit, TimeProvider clock, HttpContext ctx) =>
         {
             if (!o.Value.Enabled) return NotConfigured();
             var ct = ctx.RequestAborted;
-            if (!TryRead<AuthenticatorAssertionRawResponse>(body, out var handle, out var response))
+            using var body = await ReadJsonAsync(ctx.Request, ct);
+            if (body is null || !TryRead<AuthenticatorAssertionRawResponse>(body.RootElement, out var handle, out var response))
                 return await SignInFailed(audit, ctx, null, "malformed request");
 
             var json = challenges.Take(handle, PasskeyChallenges.Kind.SignIn, null);
@@ -244,6 +245,22 @@ public static class PasskeyEndpoints
         });
 
         return app;
+    }
+
+    /// <summary>
+    /// The body as JSON, or null when it does not parse. Read here rather than bound by the framework,
+    /// whose 400 for unparseable JSON would bypass the audited refusal.
+    /// </summary>
+    private static async Task<JsonDocument?> ReadJsonAsync(HttpRequest request, CancellationToken ct)
+    {
+        try
+        {
+            return await JsonDocument.ParseAsync(request.Body, cancellationToken: ct);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static bool TryRead<T>(JsonElement body, out string? handle, out T response) where T : class

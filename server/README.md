@@ -15,6 +15,8 @@ server/
 
 The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a child process and pushes configuration to Caddy's loopback-only admin API. Caddy does ACME and automatic HTTPS.
 
+Caddy's config is built from the rules, certificate rows and renewal marks. `ProxyChanges` runs every change to what Caddy holds one at a time: start, stop, reload, rollback, Renew, certificate writes, the conflict check and save of a rule write, and the certificate monitor's renewal decisions and cleanup. Each reads the rows it decides on inside its turn, and nothing else starts, stops or pushes to Caddy. The monitor's TLS readings are taken outside a turn; a reading taken before a renewal was requested does not end it.
+
 ## Security model
 
 | Concern | Control |
@@ -122,7 +124,7 @@ Off until `Passkeys:RelyingPartyId` and `Passkeys:Origins` are set. A ceremony's
 | `POST /api/auth/passkey/options` | Anonymous. `{handle, options}` for `navigator.credentials.get`. |
 | `POST /api/auth/passkey` | Anonymous. `{handle, response}` verifies the assertion, sets the session cookie and returns `{csrfToken, expiresAt, user}`. Any failure is 401, audited with its reason. |
 | `GET /api/auth/session` | The session's `{csrfToken, expiresAt}`, so a reloaded page recovers its token. 404 for an API key. |
-| `POST /api/auth/logout` | Anonymous. Revokes a live session and clears the cookie. The UI signs out by reading the session's CSRF token and calling this, whichever credential it held, and says so on the sign-in view when the server does not confirm. |
+| `POST /api/auth/logout` | Anonymous. Revokes a live session and clears the cookie. The UI signs out at once, then reads the session's CSRF token and calls this whichever credential it held, and says so on the sign-in view when the server does not confirm. A passkey sign-in first ends a session still on the cookie the same way. The UI runs sign-ins and sign-outs one at a time. |
 | `GET /api/passkeys` | The caller's passkeys: `id`, `name`, `createdAt`, `lastUsedAt`, `backedUp`. |
 | `POST /api/passkeys/options` | `{handle, options}` for `navigator.credentials.create`, excluding the caller's passkeys. 409 at 10 per user. |
 | `POST /api/passkeys` | `{handle, name, response}` registers the passkey to the caller. 409 at 10 per user, counted in the transaction that adds it. |
@@ -135,7 +137,7 @@ Control service
 - `GET /api/proxy/config`: the generated config, not applied.
 - `GET /api/proxy/metrics`: scraped runtime metrics.
 - `GET /api/proxy/traffic`: the last 24 hours from stored samples: requests, bytes in and out, status classes, average response time and time to first byte, median, P90 and P95 from Caddy's duration histogram, requests in flight at the latest sample, requests per hour. Answers from the database.
-- `GET /api/proxy/snapshots`, `POST /api/proxy/rollback`: config history and rollback.
+- `GET /api/proxy/snapshots`, `POST /api/proxy/rollback`: config history and rollback. A rollback ends any renewal under way, and its config stands until a start, reload, Renew or certificate write pushes the rules again.
 
 Servers and rules
 

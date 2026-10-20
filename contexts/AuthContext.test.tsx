@@ -222,4 +222,85 @@ describe('AuthProvider passkey sessions', () => {
     await act(() => auth.login('srp.k.x'));
     expect(auth.authNotice).toBeNull();
   });
+
+  const deferred = <T,>() => {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const live = { csrfToken: 'csrf-1', expiresAt: '2026-10-21T00:00:00Z' };
+
+  it('signs the page out before the server answers', async () => {
+    mocks.session.mockResolvedValue(live);
+    await renderApp();
+    const lookup = deferred<typeof live>();
+    mocks.session.mockReturnValueOnce(lookup.promise);
+    mocks.logout.mockResolvedValue(undefined);
+
+    let done = false;
+    act(() => { void auth.logout().then(() => { done = true; }); });
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('signed-out'));
+    expect(done).toBe(false);
+    expect(mocks.logout).not.toHaveBeenCalled();
+
+    await act(async () => { lookup.resolve(live); });
+    await waitFor(() => expect(done).toBe(true));
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['an API key', () => auth.login('srp.k.x'), () => mocks.whoami],
+    ['a passkey', () => auth.loginWithPasskey(), () => mocks.passkeyOptions],
+  ])('a sign-in with %s waits for the sign-out ahead of it', async (_how, signIn, first) => {
+    mocks.session.mockResolvedValue(live);
+    await renderApp();
+    mocks.whoami.mockClear();
+    const lookup = deferred<typeof live>();
+    mocks.session.mockReturnValueOnce(lookup.promise).mockRejectedValue(new ApiError(401, 'Unauthorized'));
+    let keyAtRevoke: string | null = 'unset';
+    mocks.logout.mockImplementation(async () => { keyAtRevoke = sessionStorage.getItem(KEY); });
+    mocks.passkeyOptions.mockResolvedValue({ handle: 'h1', options: { challenge: 'AQ' } });
+    mocks.getPasskey.mockResolvedValue({ id: 'cred' });
+    mocks.passkeySignIn.mockResolvedValue({ ...live, user: { userId: 'u2', name: 'Passkey User', role: 'Editor', permissions: [] } });
+
+    let signOut!: Promise<void>;
+    let signedIn!: Promise<void>;
+    act(() => { signOut = auth.logout(); });
+    // The sign-out's revocation is now waiting on its session lookup.
+    await waitFor(() => expect(mocks.session).toHaveBeenCalledTimes(2));
+    act(() => { signedIn = signIn(); });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(first()).not.toHaveBeenCalled();
+
+    await act(async () => { lookup.resolve(live); await signOut; await signedIn; });
+    expect(keyAtRevoke).toBeNull();
+    expect(mocks.logout.mock.invocationCallOrder[0]).toBeLessThan(first().mock.invocationCallOrder[0]);
+  });
+
+  it('a passkey sign-in first ends a session left on the cookie, with its CSRF token', async () => {
+    expect(await renderApp()).toBe('signed-out');
+    mocks.session.mockResolvedValue(live);
+    let csrfAtRevoke: string | null = null;
+    mocks.logout.mockImplementation(async () => { csrfAtRevoke = csrfStore.get(); });
+    mocks.passkeyOptions.mockResolvedValue({ handle: 'h1', options: { challenge: 'AQ' } });
+    mocks.getPasskey.mockResolvedValue({ id: 'cred' });
+    mocks.passkeySignIn.mockResolvedValue({ ...live, csrfToken: 'csrf-2', user: { userId: 'u2', name: 'Passkey User', role: 'Editor', permissions: [] } });
+
+    await act(() => auth.loginWithPasskey());
+    expect(csrfAtRevoke).toBe('csrf-1');
+    expect(mocks.logout.mock.invocationCallOrder[0]).toBeLessThan(mocks.passkeyOptions.mock.invocationCallOrder[0]);
+    expect(csrfStore.get()).toBe('csrf-2');
+    expect(screen.getByTestId('probe').textContent).toBe('Passkey User');
+  });
+
+  it('a passkey sign-in does not start while a session left on the cookie cannot be ended', async () => {
+    expect(await renderApp()).toBe('signed-out');
+    mocks.session.mockResolvedValue(live);
+    mocks.logout.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(act(() => auth.loginWithPasskey())).rejects.toThrow(/could not be ended/);
+    expect(mocks.passkeyOptions).not.toHaveBeenCalled();
+    expect(csrfStore.get()).toBeNull();
+    expect(screen.getByTestId('probe').textContent).toBe('signed-out');
+  });
 });

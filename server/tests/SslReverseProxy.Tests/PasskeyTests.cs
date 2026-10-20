@@ -453,6 +453,9 @@ public class PasskeyTests : IDisposable
     [InlineData("{}")]
     [InlineData("{\"handle\":\"x\",\"response\":\"not an object\"}")]
     [InlineData("[]")]
+    [InlineData("{")]
+    [InlineData("not json")]
+    [InlineData("")]
     public async Task MalformedSignIns_GetTheSameAuditedRefusal(string body)
     {
         var r = await _factory.Anonymous().PostAsync("/api/auth/passkey", new StringContent(body, Encoding.UTF8, "application/json"));

@@ -548,6 +548,119 @@ public class CertificateMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task ARollback_EndsARefusedCleanup_AndTheMonitorLeavesItInPlace()
+    {
+        var client = _factory.Authed();
+        await AddRule("a.example.com");
+        Serve("a.example.com", "0A");
+        await Check();
+        var id = (await Row("a.example.com"))!.Id;
+        var snapshot = await WithDb(async db =>
+        {
+            var s = new ConfigSnapshot { Actor = "test", ConfigJson = "{}", RuleCount = 1 };
+            db.ConfigSnapshots.Add(s);
+            await db.SaveChangesAsync();
+            return s.Id;
+        });
+        Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/certificates/{id}/renew", null)).StatusCode);
+
+        Serve("a.example.com", "0B");
+        _factory.Proxy.RefuseConfig = true;
+        var monitor = _factory.Services.GetRequiredService<CertificateMonitor>();
+        Assert.True(await monitor.CheckAllAsync(CancellationToken.None));
+        _factory.Proxy.RefuseConfig = false;
+
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/proxy/rollback", new { snapshotId = snapshot })).StatusCode);
+        var applied = _factory.Proxy.Applied.Count;
+        // The snapshot holds no renewal policy, so nothing is left to clean up.
+        Assert.False(await monitor.CheckAllAsync(CancellationToken.None));
+        Assert.Equal(applied, _factory.Proxy.Applied.Count);
+    }
+
+    [Fact]
+    public async Task AReadingTakenBeforeARenewal_DoesNotEndIt()
+    {
+        var client = _factory.Authed();
+        await AddRule("a.example.com");
+        Serve("a.example.com", "0A");
+        await Check();
+        var id = (await Row("a.example.com"))!.Id;
+
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _factory.Probe.HoldNextRead(release);
+        var cycle = Check();
+        await _factory.Probe.Holding.WaitAsync(TimeSpan.FromSeconds(10));
+        // The cycle holds a reading of 0A; Caddy now serves 0B, and a renewal starts from it.
+        _factory.Clock.Advance(TimeSpan.FromSeconds(1));
+        Serve("a.example.com", "0B");
+        Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/certificates/{id}/renew", null)).StatusCode);
+        release.SetResult();
+        await cycle;
+
+        Assert.Equal("0B", (await Row("a.example.com"))!.RenewFromSerial);
+        Assert.DoesNotContain(_factory.Events.Published, e => e.Type == "certificate.renewed");
+    }
+
+    public static TheoryData<string> Changes =>
+    [
+        "create rule", "update rule", "enable rule", "renew", "rollback", "reload", "start", "stop",
+        "add certificate", "change certificate", "delete certificate",
+    ];
+
+    [Theory]
+    [MemberData(nameof(Changes))]
+    public async Task EveryChangeToWhatCaddyHolds_WaitsForTheGate(string change)
+    {
+        var client = _factory.Authed();
+        var server = await client.PostAsJsonAsync("/api/servers", new { name = $"g-{Guid.NewGuid():N}", host = "10.0.0.9", os = "linux" });
+        var serverId = (await server.Content.ReadFromJsonAsync<JsonObject>())!["id"]!.GetValue<Guid>();
+        object Rule(string domain) => new { domain, upstreamUrl = "http://10.0.0.20:8080", enableTls = true, enabled = true };
+        var rule = (await (await client.PostAsJsonAsync($"/api/servers/{serverId}/rules", Rule("g.example.com")))
+            .Content.ReadFromJsonAsync<JsonObject>())!;
+        var ruleId = rule["id"]!.GetValue<Guid>();
+        Serve("g.example.com", "0A");
+        await Check();
+        var ruleCert = (await Row("g.example.com"))!.Id;
+        var manual = (await (await client.PostAsJsonAsync("/api/certificates", new { domain = "m.example.com", challenge = "Http" }))
+            .Content.ReadFromJsonAsync<JsonObject>())!["id"]!.GetValue<Guid>();
+        var snapshot = await WithDb(async db =>
+        {
+            var s = new ConfigSnapshot { Actor = "test", ConfigJson = "{}", RuleCount = 1 };
+            db.ConfigSnapshots.Add(s);
+            await db.SaveChangesAsync();
+            return s.Id;
+        });
+
+        Task<HttpResponseMessage> Send() => change switch
+        {
+            "create rule" => client.PostAsJsonAsync($"/api/servers/{serverId}/rules", Rule("h.example.com")),
+            "update rule" => client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/servers/{serverId}/rules/{ruleId}")
+            {
+                Content = JsonContent.Create(Rule("g.example.com")),
+                Headers = { { "If-Match", $"\"{rule["version"]}\"" } },
+            }),
+            "enable rule" => client.PatchAsJsonAsync($"/api/servers/{serverId}/rules/{ruleId}/enabled", new { enabled = true }),
+            "renew" => client.PostAsync($"/api/certificates/{ruleCert}/renew", null),
+            "rollback" => client.PostAsJsonAsync("/api/proxy/rollback", new { snapshotId = snapshot }),
+            "reload" => client.PostAsync("/api/proxy/reload", null),
+            "start" => client.PostAsync("/api/proxy/start", null),
+            "stop" => client.PostAsync("/api/proxy/stop", null),
+            "add certificate" => client.PostAsJsonAsync("/api/certificates", new { domain = "n.example.com", challenge = "Http" }),
+            "change certificate" => client.PutAsJsonAsync($"/api/certificates/{manual}", new { challenge = "Http" }),
+            "delete certificate" => client.DeleteAsync($"/api/certificates/{manual}"),
+            _ => throw new ArgumentOutOfRangeException(nameof(change)),
+        };
+
+        var gate = _factory.Services.GetRequiredService<ProxyChanges>();
+        var held = await gate.EnterAsync(CancellationToken.None);
+        var pending = Send();
+        Assert.NotSame(pending, await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(1))));
+        held.Dispose();
+        var response = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(response.IsSuccessStatusCode, $"{change}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+    }
+
+    [Fact]
     public async Task ForcedRenewal_TimesOutWithAnError()
     {
         var client = _factory.Authed();
@@ -774,10 +887,63 @@ internal sealed class FakeProxy : IProxyController
 
 internal sealed class FakeProbe : ICertificateProbe
 {
+    private TaskCompletionSource? _hold;
+
     public ConcurrentDictionary<string, ServedCertificate> Served { get; } = new(StringComparer.Ordinal);
 
-    public Task<ServedCertificate?> ReadAsync(string domain, CancellationToken ct) =>
-        Task.FromResult(Served.TryGetValue(domain, out var c) ? c : null);
+    /// <summary>Completes when a held read has taken its reading.</summary>
+    public Task Holding => _holding.Task;
+    private TaskCompletionSource _holding = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>The next read takes its reading, then waits for <paramref name="release"/> before returning it.</summary>
+    public void HoldNextRead(TaskCompletionSource release)
+    {
+        _holding = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _hold = release;
+    }
+
+    public async Task<ServedCertificate?> ReadAsync(string domain, CancellationToken ct)
+    {
+        var served = Served.TryGetValue(domain, out var c) ? c : null;
+        if (Interlocked.Exchange(ref _hold, null) is { } release)
+        {
+            _holding.TrySetResult();
+            await release.Task.WaitAsync(ct);
+        }
+        return served;
+    }
+}
+
+/// <summary>Only <see cref="ProxyChanges"/> starts or stops Caddy or pushes a config.</summary>
+public class ProxyChangeOwnershipTests
+{
+    [Fact]
+    public void NoCodeOutsideProxyChanges_StartsStopsOrPushesConfig()
+    {
+        var src = FindSource();
+        var push = new System.Text.RegularExpressions.Regex(@"\.(ApplyConfigurationAsync|ApplyRawConfigAsync)\(");
+        var lifecycle = new System.Text.RegularExpressions.Regex(@"(?i)proxy\w*\.(StartAsync|StopAsync)\(");
+        var files = Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Split(Path.DirectorySeparatorChar).Any(p => p is "bin" or "obj"))
+            .ToList();
+        Assert.Contains(files, f => Path.GetFileName(f) == "ProxyChanges.cs");
+        var offenders = files.Where(f => Path.GetFileName(f) != "ProxyChanges.cs")
+            .SelectMany(f => File.ReadLines(f).Select((line, i) => (File: f, Line: i + 1, Text: line)))
+            .Where(l => push.IsMatch(l.Text) || lifecycle.IsMatch(l.Text))
+            .Select(l => $"{Path.GetRelativePath(src, l.File)}:{l.Line}")
+            .ToList();
+        Assert.Empty(offenders);
+    }
+
+    private static string FindSource()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var src = Path.Combine(dir.FullName, "src");
+            if (Directory.Exists(Path.Combine(src, "SslReverseProxy.Api"))) return src;
+        }
+        throw new DirectoryNotFoundException("server/src not found above the test binaries.");
+    }
 }
 
 internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
