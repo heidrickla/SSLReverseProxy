@@ -46,6 +46,9 @@ public interface IProxyController
 
     /// <summary>Scrape runtime metrics from the proxy admin endpoint.</summary>
     Task<MetricsSnapshot> GetMetricsAsync(CancellationToken ct = default);
+
+    /// <summary>Record the proxy's traffic counters for the dashboard; does nothing while it is stopped.</summary>
+    Task CaptureTrafficAsync(CancellationToken ct = default);
 }
 
 public sealed record UpstreamHealth(bool Reachable, int? StatusCode, long? LatencyMs, string? Error);

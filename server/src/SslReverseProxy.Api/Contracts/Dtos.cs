@@ -86,6 +86,15 @@ public sealed record RuleHardeningDto
 public sealed record RuleDto(Guid Id, Guid ServerId, string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, bool BasicAuthEnabled, string? BasicAuthUsername, RuleHardeningDto Hardening, int Version);
 public sealed record ProxyValidationDto(bool Valid, IReadOnlyList<string> Issues, bool EngineValidated);
 public sealed record MetricsDto(DateTimeOffset CollectedAt, bool Available, long TotalRequests, long RequestsInFlight, IReadOnlyDictionary<string, double> Series, string? Message);
+
+/// <summary>Stored traffic for the last 24 hours. Times and averages are null when there is nothing to base them on.</summary>
+public sealed record TrafficDto(
+    int SampleSeconds, bool ProxyRunning, int Samples, DateTimeOffset? From, DateTimeOffset? To,
+    long Requests, long BytesIn, long BytesOut, long? InFlight,
+    double? AvgTtfbMs, double? AvgResponseMs, double? P50Ms, double? P90Ms, double? P95Ms,
+    StatusClassesDto Status, IReadOnlyList<HourlyRequestsDto> Hourly);
+public sealed record StatusClassesDto(long Success, long Redirect, long ClientError, long ServerError);
+public sealed record HourlyRequestsDto(DateTimeOffset Start, long Requests);
 public sealed record SnapshotDto(long Id, DateTimeOffset CreatedAt, string Actor, int RuleCount, string? Note);
 public sealed record UpstreamHealthDto(bool Reachable, int? StatusCode, long? LatencyMs, string? Error);
 public sealed record CertStatusDto(Guid Id, string Domain, string Status, int? DaysRemaining, DateTimeOffset? ExpiresAt);
@@ -100,6 +109,12 @@ public sealed record ProxyStatusDto(string State, string Engine, int? ProcessId,
 
 public static class DtoMappings
 {
+    public static TrafficDto ToDto(this TrafficSummary t, int sampleSeconds, bool proxyRunning) => new(
+        sampleSeconds, proxyRunning, t.Samples, t.From, t.To, t.Requests, t.BytesIn, t.BytesOut, t.InFlight,
+        t.AvgTtfbMs, t.AvgResponseMs, t.P50Ms, t.P90Ms, t.P95Ms,
+        new StatusClassesDto(t.Status2xx, t.Status3xx, t.Status4xx, t.Status5xx),
+        t.Hourly.Select(h => new HourlyRequestsDto(h.Start, h.Requests)).ToList());
+
     public static ServerDto ToDto(this ProxyServer s, ServerHealth h) =>
         new(s.Id, s.Name, s.Host, s.Os, s.Rules?.Count ?? 0, h.Status.ToString(), h.UpstreamsUp, h.UpstreamsTotal, h.CheckedAt);
     public static RuleDto ToDto(this ProxyRule r) => new(r.Id, r.ServerId, r.Domain, r.UpstreamUrl, r.EnableTls, r.Enabled, r.AllowedCidrs, r.DeniedCidrs, r.RateLimitPerMinute, !string.IsNullOrEmpty(r.BasicAuthPasswordHash), r.BasicAuthUsername, r.ToHardeningDto(), r.Version);

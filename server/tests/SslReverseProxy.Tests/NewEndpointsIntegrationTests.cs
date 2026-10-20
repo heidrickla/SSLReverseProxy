@@ -33,6 +33,7 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
 
     [Theory]
     [InlineData("/api/proxy/metrics")]
+    [InlineData("/api/proxy/traffic")]
     [InlineData("/api/proxy/config")]
     [InlineData("/api/proxy/snapshots")]
     [InlineData("/api/events")]
@@ -66,6 +67,39 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
     {
         var dto = await Authed().GetFromJsonAsync<MetricsResult>("/api/proxy/metrics");
         Assert.False(dto!.available);
+    }
+
+    [Fact]
+    public async Task Traffic_SummarisesStoredSamples_FromTheLastDay()
+    {
+        var now = DateTimeOffset.UtcNow;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.TrafficSamples.AddRange(
+                new TrafficSample { At = now.AddHours(-30).ToUnixTimeSeconds(), Requests = 1000 },
+                new TrafficSample
+                {
+                    At = now.AddMinutes(-2).ToUnixTimeSeconds(), Requests = 4, Status2xx = 3, Status4xx = 1,
+                    BytesIn = 400, BytesOut = 4000, DurationSumSeconds = 0.2, TtfbSumSeconds = 0.1, TtfbCount = 4,
+                    DurationBuckets = "0.05:4,+Inf:0",
+                });
+            await db.SaveChangesAsync();
+        }
+
+        var dto = await Authed().GetFromJsonAsync<TrafficResult>("/api/proxy/traffic");
+
+        Assert.Equal(60, dto!.sampleSeconds);
+        Assert.False(dto.proxyRunning);
+        Assert.Equal(1, dto.samples);
+        Assert.Equal(4, dto.requests);
+        Assert.Equal(4000, dto.bytesOut);
+        Assert.Equal(50, dto.avgResponseMs!.Value, 6);
+        Assert.Equal(25, dto.avgTtfbMs!.Value, 6);
+        Assert.Equal(3, dto.status.success);
+        Assert.Equal(1, dto.status.clientError);
+        Assert.Equal(24, dto.hourly.Count);
+        Assert.Equal(4, dto.hourly.Sum(h => h.requests));
     }
 
     [Fact]
@@ -547,6 +581,10 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
     private record UserResult(Guid id, string name, string role);
     private record IssuedKey(Guid id, string name, string token);
     private record AuditResult(long id, string action);
+    private record TrafficResult(int sampleSeconds, bool proxyRunning, int samples, long requests, long bytesOut,
+        double? avgResponseMs, double? avgTtfbMs, StatusResult status, List<HourResult> hourly);
+    private record StatusResult(long success, long redirect, long clientError, long serverError);
+    private record HourResult(DateTimeOffset start, long requests);
 
     public sealed class AuthedFactory : WebApplicationFactory<Program>
     {

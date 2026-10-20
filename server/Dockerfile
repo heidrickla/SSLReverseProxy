@@ -2,6 +2,16 @@
 # the Caddy child process (start/stop) and talks to it over the loopback admin
 # API — matching CaddyProxyController's model.
 
+# Caddy and the caddy-ratelimit plugin that per-rule rate limits need. CI reads
+# these two pins from here, so tests and the image run the same build.
+ARG CADDY_VERSION=2.11.7
+ARG CADDY_RATELIMIT=5625512f24f6f59d6f64fb3aafe5eecff0b286db
+
+FROM caddy:${CADDY_VERSION}-builder AS caddy
+ARG CADDY_VERSION
+ARG CADDY_RATELIMIT
+RUN xcaddy build v${CADDY_VERSION} --with github.com/mholt/caddy-ratelimit@${CADDY_RATELIMIT} --output /usr/bin/caddy
+
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
@@ -11,8 +21,12 @@ RUN dotnet publish src/SslReverseProxy.Api/SslReverseProxy.Api.csproj -c Release
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# Pull the Caddy binary from its official image.
-COPY --from=caddy:2 /usr/bin/caddy /usr/bin/caddy
+# For the compose healthcheck; the .NET runtime images ship without it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 
 COPY --from=build /app .
 
@@ -20,6 +34,8 @@ COPY --from=build /app .
 VOLUME /data
 ENV ASPNETCORE_ENVIRONMENT=Production \
     ASPNETCORE_URLS=http://+:8080 \
+    ConnectionStrings__AppDb="Data Source=/data/sslrp.db" \
+    Proxy__ConfigDirectory=/data/proxy-config \
     XDG_DATA_HOME=/data
 
 # 8080 = control API; 80/443 = the proxy (Caddy, started by the API).

@@ -96,7 +96,11 @@ public class CaddyConfigBuilderTests
         var rules = new[] { new ProxyRule { Domain = "a.example.com", UpstreamUrl = "http://10.0.0.5", Enabled = true, RateLimitPerMinute = 60 } };
         var json = CaddyConfigBuilder.Build(rules, _opts).ToJsonString();
         Assert.Contains("\"rate_limit\"", json);
-        Assert.Contains("\"events\":60", json.Replace(" ", ""));
+        // The plugin's own field names; a wrong one fails the whole config load.
+        var zone = JsonNode.Parse(json)!["apps"]!["http"]!["servers"]![CaddyConfigBuilder.HttpsServer]!
+            ["routes"]![0]!["handle"]!.AsArray().First(h => (string?)h!["handler"] == "rate_limit")!["rate_limits"]!["per_route"]!;
+        Assert.Equal(60, (int?)zone["max_events"]);
+        Assert.Equal("1m", (string?)zone["window"]);
         // {http.request.remote_host} is not a real placeholder - it never
         // resolves, so every client would share one bucket and the per-IP
         // limit would silently be a global one.
@@ -135,7 +139,14 @@ public class CaddyHardeningTests
     private static JsonNode Build(ProxyRule rule, ProxyOptions? opts = null) =>
         CaddyConfigBuilder.Build([rule], opts ?? new ProxyOptions());
 
-    private static JsonNode Srv(JsonNode cfg) => cfg["apps"]!["http"]!["servers"]!["srv0"]!;
+    private static JsonNode? Server(JsonNode cfg, string name) => cfg["apps"]!["http"]!["servers"]![name];
+
+    // The server carrying the single rule's route: HTTPS for a TLS rule, HTTP otherwise.
+    private static JsonNode Srv(JsonNode cfg) =>
+        Server(cfg, CaddyConfigBuilder.HttpsServer) ?? Server(cfg, CaddyConfigBuilder.HttpServer)!;
+
+    private static List<string?> RouteHosts(JsonNode? srv) =>
+        ((JsonArray)srv!["routes"]!).Select(r => (string?)r!["match"]![0]!["host"]![0]).ToList();
     private static JsonArray Handlers(JsonNode cfg) => (JsonArray)Srv(cfg)["routes"]![0]!["handle"]!;
 
     private static JsonNode Handler(JsonNode cfg, string name) =>
@@ -549,12 +560,108 @@ public class CaddyHardeningTests
     // --- Automatic HTTPS ---------------------------------------------------
 
     [Fact]
-    public void TlsPolicy_OmittedWhenNothingIsServedOverTls()
+    public void HttpsServer_OmittedWhenNothingIsServedOverTls()
     {
-        // A connection policy is what makes :443 a TLS listener, so emitting one
-        // for an all-plaintext config stands up a TLS port with nothing behind it.
-        Assert.Null(Srv(Build(Rule(r => r.EnableTls = false)))["tls_connection_policies"]);
-        Assert.Null(Srv(CaddyConfigBuilder.Build([], new ProxyOptions()))["tls_connection_policies"]);
+        // Without a connection policy the HTTPS port would answer plaintext.
+        foreach (var cfg in new[] { Build(Rule(r => r.EnableTls = false)), CaddyConfigBuilder.Build([], new ProxyOptions()) })
+        {
+            Assert.Null(Server(cfg, CaddyConfigBuilder.HttpsServer));
+            Assert.Null(Server(cfg, CaddyConfigBuilder.HttpServer)!["tls_connection_policies"]);
+        }
+    }
+
+    [Fact]
+    public void TlsRule_IsRoutedOnlyOnTheHttpsPort()
+    {
+        // A TLS host's route on the HTTP port is proxied in plaintext: automatic
+        // HTTPS appends its redirect after the host's own route.
+        var cfg = CaddyConfigBuilder.Build(
+            [Rule(), Rule(r => { r.Domain = "plain.example.com"; r.EnableTls = false; })], new ProxyOptions());
+        var https = Server(cfg, CaddyConfigBuilder.HttpsServer);
+        var http = Server(cfg, CaddyConfigBuilder.HttpServer);
+
+        Assert.Equal([":443"], ((JsonArray)https!["listen"]!).Select(n => (string?)n));
+        Assert.Equal([":80"], ((JsonArray)http!["listen"]!).Select(n => (string?)n));
+        Assert.Equal(["a.example.com"], RouteHosts(https));
+        Assert.Equal(["plain.example.com"], RouteHosts(http));
+        Assert.NotNull(https["tls_connection_policies"]);
+        Assert.Null(http["tls_connection_policies"]);
+    }
+
+    [Fact]
+    public void AllTlsConfig_KeepsAnEmptyHttpServer_ForTheRedirects()
+    {
+        var http = Server(Build(Rule()), CaddyConfigBuilder.HttpServer);
+        Assert.Empty((JsonArray)http!["routes"]!);
+        Assert.Null(http["automatic_https"]);
+    }
+
+    [Fact]
+    public void Ports_FollowOptions_AndAreDeclaredToAutomaticHttps()
+    {
+        var cfg = Build(Rule(), new ProxyOptions { HttpPort = 8080, HttpsPort = 8443 });
+        Assert.Equal(":8443", (string?)Server(cfg, CaddyConfigBuilder.HttpsServer)!["listen"]![0]);
+        Assert.Equal(":8080", (string?)Server(cfg, CaddyConfigBuilder.HttpServer)!["listen"]![0]);
+        // Redirects and ACME challenges use these, not the listeners.
+        Assert.Equal(8080, (int?)cfg["apps"]!["http"]!["http_port"]);
+        Assert.Equal(8443, (int?)cfg["apps"]!["http"]!["https_port"]);
+
+        var defaults = Build(Rule());
+        Assert.Null(defaults["apps"]!["http"]!["http_port"]);
+        Assert.Null(defaults["apps"]!["http"]!["https_port"]);
+    }
+
+    [Fact]
+    public void SharedSettings_ApplyToBothServers()
+    {
+        var cfg = Build(Rule(), new ProxyOptions
+        {
+            TrustedProxyCidrs = "10.0.0.0/8",
+            IdleTimeoutSeconds = 120,
+            AccessLogPath = "/tmp/a.log",
+        });
+        foreach (var name in new[] { CaddyConfigBuilder.HttpsServer, CaddyConfigBuilder.HttpServer })
+        {
+            var srv = Server(cfg, name)!;
+            Assert.Equal("10.0.0.0/8", (string?)srv["trusted_proxies"]!["ranges"]![0]);
+            Assert.Equal("120s", (string?)srv["idle_timeout"]);
+            Assert.Equal("access", (string?)srv["logs"]!["default_logger_name"]);
+        }
+    }
+
+    [Fact]
+    public void Metrics_AreEnabledOnTheHttpApp_NotPerServer()
+    {
+        // Per-server metrics still load in Caddy 2.11 but log a deprecation.
+        var cfg = Build(Rule());
+        Assert.NotNull(cfg["apps"]!["http"]!["metrics"]);
+        Assert.Null(Server(cfg, CaddyConfigBuilder.HttpsServer)!["metrics"]);
+        Assert.Null(Server(cfg, CaddyConfigBuilder.HttpServer)!["metrics"]);
+    }
+
+    // --- Certificate issuer -------------------------------------------------
+
+    [Fact]
+    public void InternalIssuer_UsesCaddysCa_WithoutTouchingTheTrustStore()
+    {
+        var cfg = Build(Rule(), new ProxyOptions { CertificateIssuer = "Internal", AcmeContactEmail = "ops@example.com" });
+        var issuer = cfg["apps"]!["tls"]!["automation"]!["policies"]![0]!["issuers"]![0]!;
+        Assert.Equal("internal", (string?)issuer["module"]);
+        // Installing the root needs elevation and changes trust for the whole host.
+        Assert.False((bool?)cfg["apps"]!["pki"]!["certificate_authorities"]!["local"]!["install_trust"]);
+    }
+
+    [Fact]
+    public void AcmeIssuer_SetOnlyWithAContactEmail()
+    {
+        var cfg = Build(Rule(), new ProxyOptions { AcmeContactEmail = "ops@example.com" });
+        var issuer = cfg["apps"]!["tls"]!["automation"]!["policies"]![0]!["issuers"]![0]!;
+        Assert.Equal("acme", (string?)issuer["module"]);
+        Assert.Equal("ops@example.com", (string?)issuer["email"]);
+        Assert.Null(cfg["apps"]!["pki"]);
+
+        // No email leaves Caddy's default issuers in place.
+        Assert.Null(Build(Rule())["apps"]!["tls"]);
     }
 
     [Fact]
@@ -570,21 +677,6 @@ public class CaddyHardeningTests
         });
         Assert.Equal(["10.0.0.0/8", "192.0.2.1"],
             ((JsonArray)Srv(cfg)["trusted_proxies"]!["ranges"]!).Select(n => (string?)n));
-    }
-
-    [Fact]
-    public void TlsDisabledRule_IsSkippedByAutomaticHttps()
-    {
-        // Otherwise Caddy issues a certificate and redirects :80 to :443 for a
-        // host the operator explicitly marked as plaintext.
-        var cfg = Build(Rule(r => r.EnableTls = false));
-        Assert.Equal("a.example.com", (string?)Srv(cfg)["automatic_https"]!["skip"]![0]);
-    }
-
-    [Fact]
-    public void TlsEnabledRule_LeavesAutomaticHttpsAlone()
-    {
-        Assert.Null(Srv(Build(Rule()))["automatic_https"]);
     }
 }
 

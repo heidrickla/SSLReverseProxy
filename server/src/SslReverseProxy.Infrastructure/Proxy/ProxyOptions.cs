@@ -24,6 +24,20 @@ public sealed class ProxyOptions
     /// <summary>When true, Caddy uses the ACME staging endpoint (for testing).</summary>
     public bool UseAcmeStaging { get; set; }
 
+    /// <summary>
+    /// Where certificates come from: "acme" (public CA, the default) or
+    /// "internal" (Caddy's local CA, for hosts no public CA can validate).
+    /// Caddy is told not to install its root in the system trust store.
+    /// </summary>
+    public string CertificateIssuer { get; set; } = "acme";
+
+    /// <summary>
+    /// Caddy's listeners. Redirects and ACME validation still name 80 and 443,
+    /// so non-default ports need those forwarded to them.
+    /// </summary>
+    public int HttpPort { get; set; } = 80;
+    public int HttpsPort { get; set; } = 443;
+
     public bool AllowLoopbackUpstreams { get; set; } = true;
     public bool AllowPrivateUpstreams { get; set; } = true;
 
@@ -91,4 +105,10 @@ public sealed class ProxyOptions
     /// which set each server's status. 0 turns the monitor off.
     /// </summary>
     public int ServerHealthIntervalSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Seconds between samples of Caddy's traffic counters for the dashboard
+    /// (25 hours are kept). 0 turns sampling off.
+    /// </summary>
+    public int TrafficSampleSeconds { get; set; } = 60;
 }

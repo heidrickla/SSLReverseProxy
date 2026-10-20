@@ -1,6 +1,7 @@
 import fs from 'node:fs';
-import { request, type Page } from '@playwright/test';
-import { e2eDatabase } from '../playwright.config';
+import http from 'node:http';
+import { request, type APIRequestContext, type Page } from '@playwright/test';
+import { e2eDatabase, proxyHttpPort } from '../playwright.config';
 
 const keyFile = `${e2eDatabase}.key`;
 
@@ -43,4 +44,36 @@ export const views = [
 export async function openView(page: Page, nav: string, heading: string): Promise<void> {
   await page.locator('aside nav').getByRole('button', { name: nav, exact: true }).click();
   await page.locator('main h2', { hasText: heading }).first().waitFor();
+}
+
+/** An API client signed in with the run's admin key. */
+export async function controlPlane(): Promise<APIRequestContext> {
+  return request.newContext({
+    baseURL: 'http://localhost:4173',
+    extraHTTPHeaders: { 'X-Api-Key': await adminKey() },
+  });
+}
+
+/** One request to the proxy's HTTP port, as a client asking for `host`. */
+export function proxyGet(host: string, path = '/'): Promise<{ status: number; location?: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port: proxyHttpPort, path, headers: { Host: host } }, res => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, location: res.headers.location }));
+    });
+    req.setTimeout(5000, () => req.destroy(new Error(`proxy request for ${host} timed out`)));
+    req.on('error', reject);
+  });
+}
+
+/**
+ * Sends demo traffic through the running proxy: `plain` requests to the
+ * plaintext host, which are proxied, and `redirected` to a TLS host, which
+ * the HTTP port answers with a redirect.
+ */
+export async function sendDemoTraffic(plain: number, redirected: number) {
+  const results = [];
+  for (let i = 0; i < plain; i++) results.push(await proxyGet('status.example.com', '/api/health'));
+  for (let i = 0; i < redirected; i++) results.push(await proxyGet('app.example.com', '/'));
+  return results;
 }

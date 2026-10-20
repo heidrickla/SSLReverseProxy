@@ -16,10 +16,14 @@ namespace SslReverseProxy.Infrastructure.Proxy;
 /// </summary>
 public sealed class CaddyProxyController : IProxyController, IDisposable
 {
+    private static readonly TimeSpan AdminStartTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ScrapeTimeout = TimeSpan.FromSeconds(5);
+
     private readonly ProxyOptions _options;
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<CaddyProxyController> _logger;
     private readonly TimeProvider _clock;
+    private readonly TrafficRecorder _traffic;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Process? _process;
@@ -30,12 +34,14 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         IOptions<ProxyOptions> options,
         IHttpClientFactory httpFactory,
         ILogger<CaddyProxyController> logger,
-        TimeProvider clock)
+        TimeProvider clock,
+        TrafficRecorder traffic)
     {
         _options = options.Value;
         _httpFactory = httpFactory;
         _logger = logger;
         _clock = clock;
+        _traffic = traffic;
     }
 
     public async Task<ProxyStatus> GetStatusAsync(CancellationToken ct = default)
@@ -76,9 +82,25 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
             if (proc is null)
                 return Faulted("Failed to start the Caddy process.");
 
+            // Redirected output has to be read: once the pipe fills, Caddy blocks
+            // on its next log line and the admin API stops answering.
+            proc.OutputDataReceived += ForwardCaddyOutput;
+            proc.ErrorDataReceived += ForwardCaddyOutput;
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
+
+            // A config pushed before the admin API listens is refused.
+            if (await WaitForAdminAsync(proc, ct) is { } startError)
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { /* already gone */ }
+                proc.Dispose();
+                return Faulted(startError);
+            }
+
             _process = proc;
             _startedAt = _clock.GetUtcNow();
             _activeRuleCount = 0;
+            _traffic.ProcessStopped();
             _logger.LogInformation("Started Caddy (pid {Pid}).", proc.Id);
             return Snapshot();
         }
@@ -101,6 +123,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
                 return Snapshot();
             }
 
+            await CaptureTrafficCoreAsync(ct);
             try
             {
                 _process.Kill(entireProcessTree: true);
@@ -112,6 +135,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
             }
 
             Reset();
+            _traffic.ProcessStopped();
             _logger.LogInformation("Stopped Caddy.");
             return Snapshot();
         }
@@ -258,12 +282,79 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         }
     }
 
-    private async Task<bool> PostConfigAsync(JsonObject config, CancellationToken ct)
+    public async Task CaptureTrafficAsync(CancellationToken ct = default)
     {
+        await _gate.WaitAsync(ct);
+        try { await CaptureTrafficCoreAsync(ct); }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Feeds Caddy's current counters to the recorder. Best effort: a failed scrape loses nothing that the next one cannot see.</summary>
+    private async Task CaptureTrafficCoreAsync(CancellationToken ct)
+    {
+        if (_process is null || _process.HasExited) return;
         try
         {
-            var client = _httpFactory.CreateClient("caddy-admin");
-            client.BaseAddress = new Uri(_options.AdminEndpoint);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(ScrapeTimeout);
+            var text = await AdminClient().GetStringAsync("/metrics", timeout.Token);
+            _traffic.Observe(CaddyTraffic.FromMetrics(text));
+        }
+        catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+        {
+            _logger.LogDebug(ex, "Could not scrape Caddy's metrics.");
+        }
+    }
+
+    private async Task<string?> WaitForAdminAsync(Process proc, CancellationToken ct)
+    {
+        var client = AdminClient();
+        var elapsed = Stopwatch.StartNew();
+        while (true)
+        {
+            if (proc.HasExited)
+                return $"Caddy exited with code {proc.ExitCode} while starting; its output is in the API log.";
+            try
+            {
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attempt.CancelAfter(TimeSpan.FromSeconds(1));
+                using var response = await client.GetAsync("/config/", attempt.Token);
+                return null;
+            }
+            catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+            {
+                // Not listening yet.
+            }
+            if (elapsed.Elapsed >= AdminStartTimeout)
+                return $"Caddy's admin API did not answer within {AdminStartTimeout.TotalSeconds:0} seconds.";
+            await Task.Delay(100, ct);
+        }
+    }
+
+    private void ForwardCaddyOutput(object? sender, DataReceivedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(e.Data)) return;
+        var line = e.Data;
+        var level = line.Contains("\"level\":\"error\"") || line.Contains("\"level\":\"fatal\"") || line.Contains("\"level\":\"panic\"")
+            ? LogLevel.Error
+            : line.Contains("\"level\":\"warn\"") ? LogLevel.Warning : LogLevel.Debug;
+        _logger.Log(level, "caddy: {Line}", line);
+    }
+
+    private HttpClient AdminClient()
+    {
+        var client = _httpFactory.CreateClient("caddy-admin");
+        client.BaseAddress = new Uri(_options.AdminEndpoint);
+        return client;
+    }
+
+    private async Task<bool> PostConfigAsync(JsonObject config, CancellationToken ct)
+    {
+        // A changed config restarts Caddy's counters; count what came before it.
+        await CaptureTrafficCoreAsync(ct);
+        try
+        {
+            var client = AdminClient();
             using var content = new StringContent(config.ToJsonString(), Encoding.UTF8, "application/json");
             var resp = await client.PostAsync("/load", content, ct);
             if (!resp.IsSuccessStatusCode)

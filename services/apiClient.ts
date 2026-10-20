@@ -119,6 +119,14 @@ export interface RuleInput {
 export interface WhoAmI { userId: string | null; name: string; role: string; permissions: string[]; }
 export interface ProxyValidation { valid: boolean; issues: string[]; engineValidated: boolean; }
 export interface Metrics { collectedAt: string; available: boolean; totalRequests: number; requestsInFlight: number; series: Record<string, number>; message: string | null; }
+/** GET /api/proxy/traffic: the last 24 hours of stored samples. Nulls mean no data for that figure. */
+export interface Traffic {
+  sampleSeconds: number; proxyRunning: boolean; samples: number; from: string | null; to: string | null;
+  requests: number; bytesIn: number; bytesOut: number; inFlight: number | null;
+  avgTtfbMs: number | null; avgResponseMs: number | null; p50Ms: number | null; p90Ms: number | null; p95Ms: number | null;
+  status: { success: number; redirect: number; clientError: number; serverError: number };
+  hourly: { start: string; requests: number }[];
+}
 export interface Snapshot { id: number; createdAt: string; actor: string; ruleCount: number; note: string | null; }
 export interface UpstreamHealth { reachable: boolean; statusCode: number | null; latencyMs: number | null; error: string | null; }
 export interface CertStatus { id: string; domain: string; status: string; daysRemaining: number | null; expiresAt: string | null; }
@@ -152,6 +160,7 @@ export const api = {
     reload: () => request<ProxyStatus>('POST', '/api/proxy/reload'),
     validate: () => request<ProxyValidation>('POST', '/api/proxy/validate'),
     metrics: () => request<Metrics>('GET', '/api/proxy/metrics'),
+    traffic: () => request<Traffic>('GET', '/api/proxy/traffic'),
     configPreview: () => request<string>('GET', '/api/proxy/config'),
     snapshots: () => request<Snapshot[]>('GET', '/api/proxy/snapshots'),
     rollback: (snapshotId: number) => request<ProxyStatus>('POST', '/api/proxy/rollback', { snapshotId }),

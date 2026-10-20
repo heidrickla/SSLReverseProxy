@@ -40,6 +40,7 @@ public static class DependencyInjection
 
         services.AddHttpClient("caddy-admin");
         services.AddHttpClient("upstream-health");
+        services.AddSingleton<TrafficRecorder>();
         services.AddSingleton<IProxyController, CaddyProxyController>();
         services.AddSingleton<IEventStream, EventStream>();
         services.AddScoped<IUpstreamHealthChecker, UpstreamHealthChecker>();

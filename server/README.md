@@ -42,6 +42,9 @@ use a mature, audited implementation instead of hand-rolled crypto.
 - `Proxy:ServerHealthIntervalSeconds` — seconds between background probes of every enabled rule's upstreams (default 60; 0 turns the monitor off). Each server's `status` is `Active` (every upstream answered), `Error` (at least one did not), `Inactive` (no enabled rule) or `Unknown` (not probed yet). A successful write under `/api/servers` probes again at once. Probes apply the SSRF policy.
 - `Seed:Demo` — Development only: fills a new database with demo servers, rules, certificates, users and audit entries. Upstreams point at `Seed:DemoUpstreamBase` (default `http://127.0.0.1:5195`, this API under the `http` launch profile) and at the discard port, so the three servers come up `Active`, `Error` and `Inactive`. Ignored, with a warning, in any other environment.
 - `Proxy:CaddyPath`, `Proxy:AdminEndpoint` (loopback), `Proxy:AcmeContactEmail`, `Proxy:UseAcmeStaging`.
+- `Proxy:CertificateIssuer` — `acme` (default: Let's Encrypt with `AcmeContactEmail`, Caddy's default issuers without it) or `internal` (Caddy's own CA; its root is not installed in the host trust store).
+- `Proxy:HttpPort` (80) and `Proxy:HttpsPort` (443) — Caddy's listeners. TLS-enabled rules are served on the HTTPS port only. The HTTP port serves plaintext rules, redirects TLS hosts to HTTPS and answers ACME challenges. Redirects name the standard port, so a non-default `HttpsPort` needs 443 forwarded to it.
+- `Proxy:TrafficSampleSeconds` — seconds between traffic samples for the dashboard (default 60; 0 turns sampling off). Each sample is the change in Caddy's metrics since the last; samples are kept 25 hours.
 - `Proxy:AllowLoopbackUpstreams`, `Proxy:AllowPrivateUpstreams` — SSRF policy.
 - `Proxy:TrustedProxyCidrs` — CIDRs of any L7 proxy in front of **Caddy**. Empty (the default)
   means `X-Forwarded-For` is ignored outright, which is correct when Caddy faces clients
@@ -73,14 +76,10 @@ dotnet test
 dotnet run --project src/SslReverseProxy.Api
 ```
 
-`CaddyBinaryValidationTests` puts the generated config permutations through a real
-`caddy validate`, which catches a key that is spelled correctly but does not belong where it was
-emitted — something assertions on the JSON alone cannot. It runs whenever `caddy` is on `PATH`,
-or point it at a binary explicitly; without one it no-ops so the suite still runs on a box with
-no Caddy installed.
+`CaddyBinaryValidationTests` puts the generated config permutations through a real `caddy validate`, which catches a key that is spelled correctly but does not belong where it was emitted. It uses `SSLRP_TEST_CADDY`, or `caddy` on `PATH`; without either it no-ops. The rate-limit cases need the caddy-ratelimit plugin and skip on a binary without it. `SSLRP_REQUIRE_CADDY=1`, set in CI, turns both into failures.
 
 ```bash
-SSLRP_TEST_CADDY=/path/to/caddy dotnet test
+SSLRP_TEST_CADDY=/path/to/caddy SSLRP_REQUIRE_CADDY=1 dotnet test
 ```
 
 On first run the database is created/migrated and a **bootstrap admin + one-time
@@ -92,6 +91,14 @@ In **Development only**, the seeded key can instead be claimed once via
 `GET /api/bootstrap-key` (loopback clients only, and only while the process that
 seeded the database is still running) — the React dev UI does this automatically
 on first load, so a fresh install signs in without touching the log.
+
+### Caddy
+
+The image and CI build Caddy with [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) at the versions pinned by `CADDY_VERSION` and `CADDY_RATELIMIT` in the [`Dockerfile`](Dockerfile). The same build locally, with Go installed:
+
+```bash
+go run github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7 build v2.11.7 --with github.com/mholt/caddy-ratelimit@5625512f24f6f59d6f64fb3aafe5eecff0b286db --output ~/.sslrp/caddy/caddy
+```
 
 ## Endpoints (all require auth except `/api/health`, `/api/ready`, and `/api/bootstrap-key`)
 
@@ -106,6 +113,7 @@ Control service
 - `POST /api/proxy/validate` — dry-run validate the rule set (structural always; engine when Caddy present).
 - `GET /api/proxy/config` — preview the generated proxy config without applying.
 - `GET /api/proxy/metrics` — scraped runtime metrics.
+- `GET /api/proxy/traffic` — the dashboard's last 24 hours from stored samples: requests, bytes in and out, status classes, average response time and time to first byte, median, P90 and P95 from Caddy's duration histogram, requests in flight at the latest sample, and requests per hour. Answers from the database, so it never waits on Caddy.
 - `GET /api/proxy/snapshots`, `POST /api/proxy/rollback` — config history + one-call rollback.
 
 Servers / rules
@@ -154,8 +162,7 @@ Users / keys / audit
 - `GET/POST /api/apikeys` (filter by `userId`), `POST /api/apikeys/{id}/{revoke|rotate}`.
 - `GET /api/audit` — audit trail with filtering (`actor`, `action`, `targetType`) and cursor paging (`beforeId`).
 
-> **Note:** route-level **rate limiting** emits config for the [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit)
-> plugin, which must be present in the Caddy build (e.g. `xcaddy build --with github.com/mholt/caddy-ratelimit`).
+> **Note:** route-level **rate limiting** emits config for the [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) plugin, which the image and the [Caddy build above](#caddy) include. A stock Caddy rejects a config with a rate-limited rule.
 > **Basic auth** uses native Caddy and works with a stock build.
 >
 > **Caddy version floor: 2.7.** The IP allow/deny lists emit the `client_ip` matcher, which
@@ -181,10 +188,7 @@ Users / keys / audit
 - **Behind a proxy:** list your reverse proxies in `Security:TrustedProxies` (IP or CIDR) so
   the rate limiter and audit log record the real client IP from `X-Forwarded-For` — untrusted
   sources are ignored to prevent spoofing.
-- **Containers:** [`Dockerfile`](Dockerfile) bundles the API with the Caddy binary (the API
-  manages Caddy as a child process); [`docker-compose.yml`](docker-compose.yml) runs it with a
-  persisted `/data` volume. Provide `SSLRP_API_KEY_PEPPER` (and optionally `SSLRP_ACME_EMAIL`,
-  `SSLRP_SPA_ORIGIN`) in the environment.
+- **Containers:** [`Dockerfile`](Dockerfile) bundles the API with Caddy and caddy-ratelimit (the API manages Caddy as a child process). The database, the generated proxy config and Caddy's certificates live in `/data`, which [`docker-compose.yml`](docker-compose.yml) persists as a volume. Provide `SSLRP_API_KEY_PEPPER` (and optionally `SSLRP_ACME_EMAIL`, `SSLRP_SPA_ORIGIN`) in the environment.
 
 ## Frontend
 

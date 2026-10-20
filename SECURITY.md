@@ -1,10 +1,6 @@
 # Security Model
 
-This app is currently a **browser-only React SPA on mock data**. Anything that
-runs in the browser is fully controllable by the user, so the client can never
-be a security boundary. This document records what has been hardened in the
-client and — more importantly — what the backend **must** enforce before the app
-handles real servers, certificates, or credentials.
+The React SPA reads and writes everything through the C# control plane in [`server/`](server/README.md), via [`services/apiClient.ts`](services/apiClient.ts). Anything that runs in the browser is fully controllable by the user, so the client is never a security boundary. This document records what is hardened in the client and what the backend enforces.
 
 ## Hardened in the client
 
@@ -38,9 +34,8 @@ server-side boundary the client checks only advise. Status of each item:
    (`server/src/SslReverseProxy.Core/Security/Permissions.cs`).
 3. **Secret custody off the client — implemented.** Certificates are issued and
    renewed by the proxy engine (Caddy ACME); the pepper and any TLS material come
-   from configuration/user-secrets, never source. The legacy Cloudflare-token
-   flow in the SPA remains client-side and should be retired in favor of the
-   server path.
+   from configuration/user-secrets, never source. The SPA's Cloudflare-token
+   flow runs client-side; moving it to the server is planned.
 4. **SSRF validation on proxy targets — implemented.** `ProxyTargetValidator`
    re-validates every upstream server-side (http(s) only; cloud-metadata and
    link-local blocked; private/loopback gated by policy) before config is
@@ -48,6 +43,3 @@ server-side boundary the client checks only advise. Status of each item:
 5. **CSP + security headers over HTTP — implemented.** `SecurityHeadersMiddleware`
    emits a strict JSON-only CSP and hardening headers on every response; HSTS +
    HTTPS redirect are enabled in production.
-
-Remaining wiring: point the React app's data layer at the API via
-[`services/apiClient.ts`](services/apiClient.ts) and retire the mock hooks.

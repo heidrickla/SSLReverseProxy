@@ -45,6 +45,7 @@ builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHand
 builder.Services.AddSingleton<ServerHealthMonitor>();
 builder.Services.AddSingleton<IServerHealthStore>(sp => sp.GetRequiredService<ServerHealthMonitor>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerHealthMonitor>());
+builder.Services.AddHostedService<TrafficSampler>();
 
 builder.Services.AddAuthentication(ApiKeyDefaults.Scheme)
     .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(ApiKeyDefaults.Scheme, _ => { });

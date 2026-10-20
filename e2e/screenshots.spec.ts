@@ -1,5 +1,6 @@
-import { test, type Page } from '@playwright/test';
-import { openView, signIn } from './session';
+import { expect, test, type Page } from '@playwright/test';
+import { caddyPath } from '../playwright.config';
+import { controlPlane, openView, sendDemoTraffic, signIn } from './session';
 
 // Retakes the README screenshots from the demo data: `bun run screenshots`.
 test.skip(!process.env.SCREENSHOTS, 'set SCREENSHOTS=1 to retake docs/screenshots');
@@ -8,6 +9,15 @@ const shot = (page: Page, name: string) =>
   page.screenshot({ path: `docs/screenshots/${name}.png`, animations: 'disabled' });
 
 test('README screenshots', async ({ page }) => {
+  // With Caddy, the dashboard shows traffic the proxy served; without it, its empty states.
+  const api = await controlPlane();
+  if (caddyPath) {
+    expect((await (await api.post('/api/proxy/start')).json()).state).toBe('Running');
+    await sendDemoTraffic(40, 6);
+    await expect.poll(async () => (await (await api.get('/api/proxy/traffic')).json()).requests,
+      { timeout: 20_000 }).toBe(46);
+  }
+
   await signIn(page, 'dark');
   await page.goto('/');
   await page.locator('main h2', { hasText: 'Key metrics' }).waitFor();
@@ -33,4 +43,7 @@ test('README screenshots', async ({ page }) => {
   await shot(page, 'users');
   await openView(page, 'Audit log', 'Audit log');
   await shot(page, 'audit-log');
+
+  if (caddyPath) await api.post('/api/proxy/stop');
+  await api.dispose();
 });

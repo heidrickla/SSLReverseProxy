@@ -24,10 +24,20 @@ public static class CaddyConfigBuilder
     private const string AccessLogName = "access";
     private const string AccessLoggerId = "http.log.access." + AccessLogName;
 
+    /// <summary>Server for TLS-enabled rules, on <see cref="ProxyOptions.HttpsPort"/>.</summary>
+    public const string HttpsServer = "https";
+
+    /// <summary>
+    /// Server for plaintext rules, on <see cref="ProxyOptions.HttpPort"/>.
+    /// Automatic HTTPS adds its redirects and ACME challenges to it.
+    /// </summary>
+    public const string HttpServer = "http";
+
     public static JsonObject Build(IReadOnlyCollection<ProxyRule> rules, ProxyOptions options)
     {
         var active = rules.Where(r => r.Enabled).ToList();
-        var routes = new JsonArray();
+        var tlsRoutes = new JsonArray();
+        var plainRoutes = new JsonArray();
 
         foreach (var rule in active)
         {
@@ -64,7 +74,7 @@ public static class CaddyConfigBuilder
 
             handle.Add(BuildReverseProxyHandler(rule));
 
-            routes.Add(new JsonObject
+            (rule.EnableTls ? tlsRoutes : plainRoutes).Add(new JsonObject
             {
                 ["match"] = new JsonArray { new JsonObject { ["host"] = new JsonArray { rule.Domain } } },
                 ["handle"] = handle,
@@ -72,83 +82,44 @@ public static class CaddyConfigBuilder
             });
         }
 
-        var srv0 = new JsonObject
-        {
-            ["listen"] = new JsonArray { ":443", ":80" },
-            ["routes"] = routes,
-            // Enable Prometheus metrics collection for this server.
-            ["metrics"] = new JsonObject(),
-        };
+        // One server per port. A TLS host's route on a server that also listens
+        // on the HTTP port is proxied in plaintext there, because automatic
+        // HTTPS appends its redirect after the host's own route.
+        var servers = new JsonObject();
 
-        // Believe X-Forwarded-For only from the proxies we were told about, so
-        // the per-rule IP lists match on the real client. With no trust list
-        // configured, Caddy ignores the header entirely and client_ip is just
-        // the peer address — which is the correct default for a proxy that
-        // faces clients directly, and unspoofable.
-        var trusted = ParseCsv(options.TrustedProxyCidrs).Where(IsIpOrCidr).ToList();
-        if (trusted.Count > 0)
-        {
-            srv0["trusted_proxies"] = new JsonObject
-            {
-                ["source"] = "static",
-                ["ranges"] = ToJsonArray(trusted),
-            };
-            // Strict parsing walks X-Forwarded-For right to left and stops at
-            // the first hop that is not trusted. Without it Caddy takes the
-            // leftmost entry, which the client wrote and can therefore forge —
-            // and forging it is exactly how you would walk through an allow-list.
-            srv0["trusted_proxies_strict"] = 1;
-        }
-
-        AddIfPositive(srv0, "read_timeout", options.ReadTimeoutSeconds);
-        AddIfPositive(srv0, "read_header_timeout", options.ReadHeaderTimeoutSeconds);
-        AddIfPositive(srv0, "write_timeout", options.WriteTimeoutSeconds);
-        AddIfPositive(srv0, "idle_timeout", options.IdleTimeoutSeconds);
-
-        // Only when something is actually served over TLS. A connection policy
-        // is what turns :443 into a TLS listener, so emitting one for a config
-        // whose hosts are all plaintext (or for the empty bootstrap config)
-        // would stand up a TLS port with nothing behind it.
+        // Only when something is served over TLS. A connection policy is what
+        // makes the HTTPS port a TLS listener, so the server without one would
+        // answer plaintext on it.
         //
         // A single policy with no "match" is a catch-all, so it applies to every
         // connection while leaving SNI-based certificate selection alone. If
         // every policy carried a match, a handshake matching none would die
         // before any certificate was chosen.
-        if (active.Any(r => r.EnableTls))
+        if (tlsRoutes.Count > 0)
         {
             var policy = new JsonObject { ["protocol_min"] = NormalizeTlsVersion(options.TlsMinVersion) };
             var ciphers = ParseCsv(options.TlsCipherSuites);
             if (ciphers.Count > 0) policy["cipher_suites"] = ToJsonArray(ciphers);
-            srv0["tls_connection_policies"] = new JsonArray { policy };
+            var https = Server(options.HttpsPort, tlsRoutes, active, options);
+            https["tls_connection_policies"] = new JsonArray { policy };
+            servers[HttpsServer] = https;
         }
 
-        // Rules with TLS switched off are excluded from automatic HTTPS, which
-        // otherwise issues a certificate and redirects :80 to :443 for every
-        // host that appears in a route.
-        var plaintextHosts = active.Where(r => !r.EnableTls).Select(r => r.Domain).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (plaintextHosts.Count > 0)
-        {
-            srv0["automatic_https"] = new JsonObject
-            {
-                ["skip"] = ToJsonArray(plaintextHosts),
-            };
-        }
+        // Always present: it carries the redirects for the TLS hosts. Listening
+        // only on the HTTP port keeps automatic HTTPS off the plaintext hosts.
+        servers[HttpServer] = Server(options.HttpPort, plainRoutes, active, options);
 
-        if (!string.IsNullOrWhiteSpace(options.AccessLogPath))
+        var http = new JsonObject
         {
-            var logs = new JsonObject { ["default_logger_name"] = AccessLogName };
-            var skip = active.Where(r => r.SkipAccessLog).Select(r => r.Domain)
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (skip.Count > 0) logs["skip_hosts"] = ToJsonArray(skip);
-            srv0["logs"] = logs;
-        }
-
-        var apps = new JsonObject
-        {
-            ["http"] = new JsonObject { ["servers"] = new JsonObject { ["srv0"] = srv0 } },
+            ["servers"] = servers,
+            ["metrics"] = new JsonObject(),
         };
+        // Automatic HTTPS redirects to, and answers ACME challenges on, these ports.
+        if (options.HttpPort != 80) http["http_port"] = options.HttpPort;
+        if (options.HttpsPort != 443) http["https_port"] = options.HttpsPort;
+        var apps = new JsonObject { ["http"] = http };
 
-        if (!string.IsNullOrWhiteSpace(options.AcmeContactEmail))
+        if (BuildIssuer(options) is { } issuer)
         {
             apps["tls"] = new JsonObject
             {
@@ -156,21 +127,21 @@ public static class CaddyConfigBuilder
                 {
                     ["policies"] = new JsonArray
                     {
-                        new JsonObject
-                        {
-                            ["issuers"] = new JsonArray
-                            {
-                                new JsonObject
-                                {
-                                    ["module"] = "acme",
-                                    ["email"] = options.AcmeContactEmail,
-                                    ["ca"] = options.UseAcmeStaging
-                                        ? "https://acme-staging-v02.api.letsencrypt.org/directory"
-                                        : "https://acme-v02.api.letsencrypt.org/directory",
-                                },
-                            },
-                        },
+                        new JsonObject { ["issuers"] = new JsonArray { issuer } },
                     },
+                },
+            };
+        }
+
+        // Caddy installs its local root in the system trust store by default,
+        // which needs elevation and changes the host for every program on it.
+        if (UsesInternalIssuer(options))
+        {
+            apps["pki"] = new JsonObject
+            {
+                ["certificate_authorities"] = new JsonObject
+                {
+                    ["local"] = new JsonObject { ["install_trust"] = false },
                 },
             };
         }
@@ -186,6 +157,52 @@ public static class CaddyConfigBuilder
             root["logging"] = logging;
 
         return root;
+    }
+
+    /// <summary>Settings shared by both servers: client IP, timeouts and the access log.</summary>
+    private static JsonObject Server(int port, JsonArray routes, IReadOnlyList<ProxyRule> active, ProxyOptions options)
+    {
+        var srv = new JsonObject
+        {
+            ["listen"] = new JsonArray { $":{port}" },
+            ["routes"] = routes,
+        };
+
+        // Believe X-Forwarded-For only from the proxies we were told about, so
+        // the per-rule IP lists match on the real client. With no trust list
+        // configured, Caddy ignores the header entirely and client_ip is just
+        // the peer address — which is the correct default for a proxy that
+        // faces clients directly, and unspoofable.
+        var trusted = ParseCsv(options.TrustedProxyCidrs).Where(IsIpOrCidr).ToList();
+        if (trusted.Count > 0)
+        {
+            srv["trusted_proxies"] = new JsonObject
+            {
+                ["source"] = "static",
+                ["ranges"] = ToJsonArray(trusted),
+            };
+            // Strict parsing walks X-Forwarded-For right to left and stops at
+            // the first hop that is not trusted. Without it Caddy takes the
+            // leftmost entry, which the client wrote and can therefore forge —
+            // and forging it is exactly how you would walk through an allow-list.
+            srv["trusted_proxies_strict"] = 1;
+        }
+
+        AddIfPositive(srv, "read_timeout", options.ReadTimeoutSeconds);
+        AddIfPositive(srv, "read_header_timeout", options.ReadHeaderTimeoutSeconds);
+        AddIfPositive(srv, "write_timeout", options.WriteTimeoutSeconds);
+        AddIfPositive(srv, "idle_timeout", options.IdleTimeoutSeconds);
+
+        if (!string.IsNullOrWhiteSpace(options.AccessLogPath))
+        {
+            var logs = new JsonObject { ["default_logger_name"] = AccessLogName };
+            var skip = active.Where(r => r.SkipAccessLog).Select(r => r.Domain)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (skip.Count > 0) logs["skip_hosts"] = ToJsonArray(skip);
+            srv["logs"] = logs;
+        }
+
+        return srv;
     }
 
     /// <summary>
@@ -219,6 +236,26 @@ public static class CaddyConfigBuilder
                     ["exclude"] = new JsonArray { AccessLoggerId },
                 },
             },
+        };
+    }
+
+    private static bool UsesInternalIssuer(ProxyOptions options) =>
+        string.Equals(options.CertificateIssuer?.Trim(), "internal", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Null leaves Caddy's default issuers (Let's Encrypt, then ZeroSSL) in place.</summary>
+    private static JsonObject? BuildIssuer(ProxyOptions options)
+    {
+        if (UsesInternalIssuer(options))
+            return new JsonObject { ["module"] = "internal" };
+        if (string.IsNullOrWhiteSpace(options.AcmeContactEmail))
+            return null;
+        return new JsonObject
+        {
+            ["module"] = "acme",
+            ["email"] = options.AcmeContactEmail,
+            ["ca"] = options.UseAcmeStaging
+                ? "https://acme-staging-v02.api.letsencrypt.org/directory"
+                : "https://acme-v02.api.letsencrypt.org/directory",
         };
     }
 
@@ -334,9 +371,6 @@ public static class CaddyConfigBuilder
 
         // HSTS only means anything over TLS, and promising it on a plaintext
         // route would tell browsers to refuse the only scheme it serves.
-        // The route itself is shared by the :80 and :443 listeners, but a
-        // TLS-enabled host has automatic HTTPS redirecting :80 to :443 ahead of
-        // it, so the header is not in practice served over plaintext.
         if (rule.HstsMaxAgeDays is > 0 && rule.EnableTls)
         {
             var seconds = (long)rule.HstsMaxAgeDays.Value * 86400;
@@ -422,16 +456,13 @@ public static class CaddyConfigBuilder
     private static JsonObject BuildRateLimitHandler(int perMinute) => new()
     {
         ["handler"] = "rate_limit",
-        ["rate_limit"] = new JsonObject
+        ["rate_limits"] = new JsonObject
         {
-            ["zones"] = new JsonObject
+            ["per_route"] = new JsonObject
             {
-                ["per_route"] = new JsonObject
-                {
-                    ["key"] = "{http.vars.client_ip}",
-                    ["events"] = perMinute,
-                    ["window"] = "1m",
-                },
+                ["key"] = "{http.vars.client_ip}",
+                ["max_events"] = perMinute,
+                ["window"] = "1m",
             },
         },
     };

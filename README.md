@@ -24,7 +24,7 @@ an append-only audit trail with config snapshots and one-call rollback.
 
 ## Screenshots
 
-Screenshots show the application running against the control plane's Development demo data (`Seed:Demo`), with example domains and documentation IP addresses. Dashboard charts and performance figures are illustrative.
+Screenshots show the application running against the control plane's Development demo data (`Seed:Demo`), with example domains and documentation IP addresses. The dashboard's traffic is what Caddy served to test requests during the capture.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -47,14 +47,14 @@ Screenshots show the application running against the control plane's Development
 1. `bun install`
 2. `bun run dev` — or `bun run build && bun run preview` for a production build (which injects the Content-Security-Policy). Both forward `/api` to the control plane at `http://localhost:5195`; `SSLRP_API_TARGET` changes the target.
 3. `bun run test` runs the Vitest suite.
-4. `bun run e2e` runs the Playwright smoke test. It starts the control plane with demo data on a new database, builds and previews the UI, and checks every view in both themes, server statuses and live status updates. It needs the .NET 10 SDK and free ports 5195 and 4173; install the browser once with `bunx playwright install chromium`.
-5. `bun run screenshots` retakes `docs/screenshots` from the same demo data.
+4. `bun run e2e` runs the Playwright tests. They start the control plane with demo data on a new database, build and preview the UI, and check every view in both themes, server statuses and live status updates. With `SSLRP_TEST_CADDY` naming a Caddy built with caddy-ratelimit ([server/README.md](server/README.md#caddy)), they also start the proxy, check plaintext and TLS hosts on its HTTP port, and check the dashboard shows the traffic it served. They need the .NET 10 SDK and free ports 5195 and 4173, plus 8780, 8743 and 2019 for Caddy; install the browser once with `bunx playwright install chromium`.
+5. `bun run screenshots` retakes `docs/screenshots` from the same demo data, with proxy traffic when `SSLRP_TEST_CADDY` is set.
 
 **Backend** (prerequisite: .NET 10 SDK)
 
 ```bash
 cd server
-dotnet test          # 151 tests
+dotnet test          # 179 tests
 dotnet run --project src/SslReverseProxy.Api
 ```
 

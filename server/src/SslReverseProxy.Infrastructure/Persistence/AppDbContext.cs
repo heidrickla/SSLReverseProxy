@@ -14,6 +14,7 @@ public class AppDbContext : DbContext
     public DbSet<Certificate> Certificates => Set<Certificate>();
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<ConfigSnapshot> ConfigSnapshots => Set<ConfigSnapshot>();
+    public DbSet<TrafficSample> TrafficSamples => Set<TrafficSample>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -85,6 +86,13 @@ public class AppDbContext : DbContext
             e.Property(a => a.TargetType).HasMaxLength(100);
             e.Property(a => a.TargetName).HasMaxLength(300);
             e.HasIndex(a => a.Timestamp);
+        });
+
+        b.Entity<TrafficSample>(e =>
+        {
+            e.HasKey(s => s.Id);
+            e.Property(s => s.DurationBuckets).HasMaxLength(1024);
+            e.HasIndex(s => s.At);
         });
     }
 }

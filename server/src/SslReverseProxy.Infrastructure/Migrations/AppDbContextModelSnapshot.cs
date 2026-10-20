@@ -66,7 +66,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("ApiKeys", (string)null);
+                    b.ToTable("ApiKeys");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.AuditEntry", b =>
@@ -113,7 +113,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("Timestamp");
 
-                    b.ToTable("AuditEntries", (string)null);
+                    b.ToTable("AuditEntries");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.Certificate", b =>
@@ -153,7 +153,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("Domain");
 
-                    b.ToTable("Certificates", (string)null);
+                    b.ToTable("Certificates");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ConfigSnapshot", b =>
@@ -185,7 +185,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("CreatedAt");
 
-                    b.ToTable("ConfigSnapshots", (string)null);
+                    b.ToTable("ConfigSnapshots");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ProxyRule", b =>
@@ -308,7 +308,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasIndex("ServerId");
 
-                    b.ToTable("Rules", (string)null);
+                    b.ToTable("Rules");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ProxyServer", b =>
@@ -336,7 +336,61 @@ namespace SslReverseProxy.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Servers", (string)null);
+                    b.ToTable("Servers");
+                });
+
+            modelBuilder.Entity("SslReverseProxy.Core.Domain.TrafficSample", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("At")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("BytesIn")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("BytesOut")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DurationBuckets")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("DurationSumSeconds")
+                        .HasColumnType("REAL");
+
+                    b.Property<long>("InFlight")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Requests")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Status2xx")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Status3xx")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Status4xx")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Status5xx")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("TtfbCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("TtfbSumSeconds")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("At");
+
+                    b.ToTable("TrafficSamples");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.User", b =>
@@ -372,7 +426,7 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.ToTable("Users", (string)null);
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ApiKey", b =>

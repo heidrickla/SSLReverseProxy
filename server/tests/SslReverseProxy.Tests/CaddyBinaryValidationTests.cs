@@ -15,10 +15,12 @@ namespace SslReverseProxy.Tests;
 /// only an actual binary can tell us that.
 /// </para>
 /// <para>
-/// Opt-in: point <c>SSLRP_TEST_CADDY</c> at a caddy binary, or put one on PATH.
-/// With neither, these no-op rather than fail, so the suite still runs on a box
-/// without Caddy installed. <see cref="Validation_IsActuallyRunning"/> is the
-/// guard against that leniency turning into a matrix that passes vacuously.
+/// Point <c>SSLRP_TEST_CADDY</c> at a caddy binary, or put one on PATH. With
+/// neither, these no-op so the suite runs on a box without Caddy. CI sets
+/// <c>SSLRP_REQUIRE_CADDY=1</c>, which turns a missing binary, or one without
+/// the caddy-ratelimit plugin, into a failure.
+/// <see cref="Validation_IsActuallyRunning"/> guards against a matrix that
+/// passes vacuously.
 /// </para>
 /// </summary>
 public class CaddyBinaryValidationTests
@@ -53,9 +55,6 @@ public class CaddyBinaryValidationTests
         return r;
     }
 
-    // Rate limiting is deliberately absent: it needs the caddy-ratelimit plugin,
-    // which a stock binary does not have, so including it would make this suite
-    // fail for a reason that is not a defect.
     public static TheoryData<string> CaseNames()
     {
         var data = new TheoryData<string>();
@@ -139,6 +138,15 @@ public class CaddyBinaryValidationTests
         ["acme"] = ([R("a.example.com", "http://10.0.0.5")],
             new ProxyOptions { AcmeContactEmail = "ops@example.com", UseAcmeStaging = true }),
 
+        ["internal-issuer-and-custom-ports"] = ([
+            R("a.example.com", "http://10.0.0.5"),
+            R("plain.example.com", "http://10.0.0.6", r => r.EnableTls = false),
+        ], new ProxyOptions { CertificateIssuer = "internal", HttpPort = 8080, HttpsPort = 8443 }),
+
+        // Needs the caddy-ratelimit plugin, which the image and CI build include.
+        ["rate-limit"] = ([R("a.example.com", "http://10.0.0.5", r => r.RateLimitPerMinute = 120)],
+            new ProxyOptions()),
+
         ["everything-at-once"] = ([
             R("a.example.com", "https://backend.example.com", r =>
             {
@@ -157,6 +165,7 @@ public class CaddyBinaryValidationTests
                 r.HealthCheckPath = "/healthz";
                 r.HealthCheckIntervalSeconds = 30;
                 r.HealthCheckTimeoutSeconds = 5;
+                r.RateLimitPerMinute = 600;
             }),
             R("plain.example.com", "http://10.0.0.9", r => { r.EnableTls = false; r.SkipAccessLog = true; }),
         ], new ProxyOptions
@@ -173,13 +182,15 @@ public class CaddyBinaryValidationTests
     [MemberData(nameof(CaseNames))]
     public void GeneratedConfig_IsAcceptedByCaddy(string caseName)
     {
-        if (FindCaddy() is not { } caddy)
-        {
-            _out.WriteLine("No caddy binary; set SSLRP_TEST_CADDY to run this.");
-            return;
-        }
+        if (Caddy() is not { } caddy) return;
 
         var (rules, options) = Cases[caseName];
+        if (rules.Any(r => r.RateLimitPerMinute is > 0) && !HasRateLimitPlugin(caddy))
+        {
+            Assert.False(Required, $"{caddy} lacks http.handlers.rate_limit (the caddy-ratelimit plugin).");
+            _out.WriteLine("Caddy without the caddy-ratelimit plugin; skipping.");
+            return;
+        }
         var json = CaddyConfigBuilder.Build(rules, options)
             .ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
 
@@ -193,11 +204,7 @@ public class CaddyBinaryValidationTests
         // Without this, a caddy that always exited 0 — or a Validate() that
         // silently failed to launch it — would turn the whole matrix above into
         // a set of assertions that prove nothing.
-        if (FindCaddy() is not { } caddy)
-        {
-            _out.WriteLine("No caddy binary; set SSLRP_TEST_CADDY to run this.");
-            return;
-        }
+        if (Caddy() is not { } caddy) return;
 
         var json = CaddyConfigBuilder.Build([R("a.example.com", "http://10.0.0.5")], new ProxyOptions())
             .ToJsonString();
@@ -210,25 +217,51 @@ public class CaddyBinaryValidationTests
         _out.WriteLine(output);
     }
 
+    private static bool Required => Environment.GetEnvironmentVariable("SSLRP_REQUIRE_CADDY") == "1";
+
+    private string? Caddy()
+    {
+        var caddy = FindCaddy();
+        if (caddy is null)
+        {
+            Assert.False(Required, "SSLRP_REQUIRE_CADDY=1 but no caddy binary: set SSLRP_TEST_CADDY.");
+            _out.WriteLine("No caddy binary; set SSLRP_TEST_CADDY to run this.");
+        }
+        return caddy;
+    }
+
+    private static bool HasRateLimitPlugin(string caddy)
+    {
+        var (exit, output) = Run(caddy, "list-modules");
+        return exit == 0 && output.Split('\n').Any(l => l.Trim() == "http.handlers.rate_limit");
+    }
+
+    private static (int Exit, string Output) Run(string caddy, params string[] args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = caddy,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var proc = Process.Start(psi)!;
+        // Both streams read concurrently, so neither pipe fills while the other is drained.
+        var stderr = proc.StandardError.ReadToEndAsync();
+        var output = proc.StandardOutput.ReadToEnd() + stderr.GetAwaiter().GetResult();
+        proc.WaitForExit(60_000);
+        return (proc.ExitCode, output);
+    }
+
     private static (int Exit, string Output) Validate(string caddy, string json)
     {
         var path = Path.Combine(Path.GetTempPath(), $"sslrp-validate-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, json);
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = caddy,
-                ArgumentList = { "validate", "--config", path },
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi)!;
-            var output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-            proc.WaitForExit(60_000);
-            return (proc.ExitCode, output);
+            return Run(caddy, "validate", "--config", path);
         }
         finally
         {

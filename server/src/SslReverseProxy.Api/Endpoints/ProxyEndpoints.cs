@@ -1,9 +1,11 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using SslReverseProxy.Api.Auth;
 using SslReverseProxy.Api.Contracts;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
 using SslReverseProxy.Infrastructure.Persistence;
+using SslReverseProxy.Infrastructure.Proxy;
 
 namespace SslReverseProxy.Api.Endpoints;
 
@@ -23,6 +25,21 @@ public static class ProxyEndpoints
         {
             var m = await proxy.GetMetricsAsync(ct);
             return Results.Ok(new MetricsDto(m.CollectedAt, m.Available, m.TotalRequests, m.RequestsInFlight, m.Series, m.Message));
+        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead));
+
+        // The last 24 hours of stored traffic samples, for the dashboard.
+        group.MapGet("/traffic", async (
+            AppDbContext db, IProxyController proxy, TimeProvider clock,
+            IOptions<ProxyOptions> options, CancellationToken ct) =>
+        {
+            var now = clock.GetUtcNow();
+            var since = (now - TrafficSummary.Window).ToUnixTimeSeconds();
+            var samples = await db.TrafficSamples.AsNoTracking().Where(s => s.At > since).ToListAsync(ct);
+            var interval = Math.Max(0, options.Value.TrafficSampleSeconds);
+            // In-flight is shown while the newest sample is under two intervals old.
+            var summary = TrafficSummary.Compute(samples, now, TimeSpan.FromSeconds(Math.Max(interval, 1) * 2 + 5));
+            var running = (await proxy.GetStatusAsync(ct)).State == ProxyState.Running;
+            return Results.Ok(summary.ToDto(interval, running));
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead));
 
         // Preview the generated proxy config without applying it.
