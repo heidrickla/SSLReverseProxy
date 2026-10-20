@@ -96,6 +96,7 @@ public static class ServerEndpoints
             ApplyHardening(rule, req.Hardening);
             ApplyRouting(rule, req.Routing);
             if (PlaceholderProblem(rule) is { } braced) return braced;
+            if (await ConflictProblemAsync(db, rule, ctx.RequestAborted) is { } clash) return clash;
             db.Rules.Add(rule);
             await db.SaveChangesAsync(ctx.RequestAborted);
             await audit.AuditAsync(me, ctx, "Create Proxy Rule", "Proxy Rule", RouteName(rule));
@@ -138,6 +139,7 @@ public static class ServerEndpoints
             ApplyRouting(rule, req.Routing);
             // Checked on the row as it will be saved; the request scope discards it on refusal.
             if (PlaceholderProblem(rule) is { } braced) return braced;
+            if (await ConflictProblemAsync(db, rule, ctx.RequestAborted) is { } clash) return clash;
             rule.UpdatedAt = DateTimeOffset.UtcNow;
             rule.Version++;
 
@@ -167,6 +169,7 @@ public static class ServerEndpoints
                 return precondition;
 
             rule.Enabled = req.Enabled;
+            if (await ConflictProblemAsync(db, rule, ctx.RequestAborted) is { } clash) return clash;
             rule.UpdatedAt = DateTimeOffset.UtcNow;
             rule.Version++;
             if (await SaveOrConflictAsync(db, ctx) is { } conflict) return conflict;
@@ -337,6 +340,18 @@ public static class ServerEndpoints
     }
 
     private static string RouteName(ProxyRule rule) => rule.Domain + rule.PathPrefix;
+
+    /// <summary>
+    /// A rule may not share a host and path with another enabled rule, nor differ from its host's TLS
+    /// setting. 400 rather than 409: the UI reads 409 as a lost race and offers a reload.
+    /// </summary>
+    private static async Task<IResult?> ConflictProblemAsync(AppDbContext db, ProxyRule rule, CancellationToken ct)
+    {
+        var others = await db.Rules.AsNoTracking().Where(r => r.Enabled && r.Id != rule.Id).ToListAsync(ct);
+        return RoutePath.ConflictWith(rule, others) is { } message
+            ? Results.ValidationProblem(new Dictionary<string, string[]> { ["domain"] = [message] })
+            : null;
+    }
 
     /// <summary>Caddy would expand a brace as a placeholder, reading its own environment into the config.</summary>
     private static IResult? PlaceholderProblem(ProxyRule rule)

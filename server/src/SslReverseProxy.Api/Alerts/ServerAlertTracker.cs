@@ -36,7 +36,8 @@ public sealed class ServerAlertTracker(int downChecks)
                 (failing, down) = (0, false);
                 break;
             default:
-                (failing, down) = (0, false);
+                // Inactive or unknown: no reading either way, so a down server stays down until Active.
+                failing = 0;
                 break;
         }
         _state[serverId] = (failing, down);

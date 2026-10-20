@@ -490,6 +490,64 @@ public class CertificateMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task ARefusedCleanup_IsRetriedUntilCaddyTakesIt()
+    {
+        var client = _factory.Authed();
+        await AddRule("a.example.com");
+        Serve("a.example.com", "0A");
+        await Check();
+        var id = (await Row("a.example.com"))!.Id;
+        Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/certificates/{id}/renew", null)).StatusCode);
+
+        Serve("a.example.com", "0B");
+        _factory.Proxy.RefuseConfig = true;
+        var applied = _factory.Proxy.Applied.Count;
+        var monitor = _factory.Services.GetRequiredService<CertificateMonitor>();
+        Assert.True(await monitor.CheckAllAsync(CancellationToken.None));
+        Assert.Null((await Row("a.example.com"))!.RenewFromSerial);
+
+        // Refused again: still pending, applied again on the next cycle.
+        Assert.True(await monitor.CheckAllAsync(CancellationToken.None));
+        _factory.Proxy.RefuseConfig = false;
+        Assert.False(await monitor.CheckAllAsync(CancellationToken.None));
+        Assert.Equal(applied + 3, _factory.Proxy.Applied.Count);
+        Assert.False(_factory.Proxy.Applied.Last().Certificates.Single().RenewPending);
+
+        await Check();
+        Assert.Equal(applied + 3, _factory.Proxy.Applied.Count);
+    }
+
+    [Fact]
+    public async Task Rollback_CancelsARenewalUnderWay()
+    {
+        var client = _factory.Authed();
+        await AddRule("a.example.com");
+        Serve("a.example.com", "0A");
+        await Check();
+        var id = (await Row("a.example.com"))!.Id;
+        var snapshot = await WithDb(async db =>
+        {
+            var s = new ConfigSnapshot { Actor = "test", ConfigJson = "{}", RuleCount = 1 };
+            db.ConfigSnapshots.Add(s);
+            await db.SaveChangesAsync();
+            return s.Id;
+        });
+        Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/certificates/{id}/renew", null)).StatusCode);
+
+        var res = await client.PostAsJsonAsync("/api/proxy/rollback", new { snapshotId = snapshot });
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal(1, _factory.Proxy.RawApplied);
+        Assert.Null((await Row("a.example.com"))!.RenewFromSerial);
+        Assert.Contains(_factory.Events.Published, e => e.Type == "certificate.renew_cancelled");
+
+        // The monitor sees nothing pending and records no failure.
+        _factory.Clock.Advance(TimeSpan.FromMinutes(11));
+        await Check();
+        Assert.Null((await Row("a.example.com"))!.LastError);
+        Assert.DoesNotContain(_factory.Events.Published, e => e.Type == "certificate.renew_failed");
+    }
+
+    [Fact]
     public async Task ForcedRenewal_TimesOutWithAnError()
     {
         var client = _factory.Authed();
@@ -683,8 +741,11 @@ internal sealed class CertificateFactory(string? cloudflareToken) : WebApplicati
 internal sealed class FakeProxy : IProxyController
 {
     public volatile ProxyState State = ProxyState.Running;
+    /// <summary>Set to make Caddy refuse configs; GetStatusAsync still reports <see cref="State"/>.</summary>
+    public volatile bool RefuseConfig;
     public ConcurrentQueue<ProxyPlan> AppliedQueue { get; } = new();
     public List<ProxyPlan> Applied => AppliedQueue.ToList();
+    public int RawApplied;
 
     private ProxyStatus Status() => new(State, "fake", null, null, 0, null);
 
@@ -695,13 +756,17 @@ internal sealed class FakeProxy : IProxyController
     public Task<ProxyStatus> ApplyConfigurationAsync(ProxyPlan plan, CancellationToken ct = default)
     {
         AppliedQueue.Enqueue(plan);
-        return Task.FromResult(Status());
+        return Task.FromResult(RefuseConfig ? new ProxyStatus(ProxyState.Faulted, "fake", null, null, 0, "refused") : Status());
     }
 
     public string BuildConfigJson(ProxyPlan plan) => CaddyConfigBuilder.Build(plan, new ProxyOptions()).ToJsonString();
     public Task<ProxyValidationResult> ValidateConfigurationAsync(ProxyPlan plan, CancellationToken ct = default) =>
         Task.FromResult(new ProxyValidationResult(true, [], false));
-    public Task<ProxyStatus> ApplyRawConfigAsync(string configJson, CancellationToken ct = default) => Task.FromResult(Status());
+    public Task<ProxyStatus> ApplyRawConfigAsync(string configJson, CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref RawApplied);
+        return Task.FromResult(Status());
+    }
     public Task<MetricsSnapshot> GetMetricsAsync(CancellationToken ct = default) =>
         Task.FromResult(new MetricsSnapshot(DateTimeOffset.UtcNow, false, 0, 0, new Dictionary<string, double>(), null));
     public Task CaptureTrafficAsync(CancellationToken ct = default) => Task.CompletedTask;

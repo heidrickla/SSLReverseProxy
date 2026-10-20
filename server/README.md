@@ -110,7 +110,7 @@ Meta
 - `GET /api/health`: anonymous liveness. `GET /api/ready`: anonymous readiness (database and proxy).
 - `GET /api/bootstrap-key`: one-time first-run key claim (Development and loopback only; 404 otherwise).
 - `GET /api/whoami`: current principal and permissions.
-- `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes, `certificate.status` when a certificate's does, and `certificate.renewed` or `certificate.renew_failed` when a forced renewal ends. Headers go out once the subscriber is registered, so no event published after the client has them is missed.
+- `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes, `certificate.status` when a certificate's does, `certificate.renewed` or `certificate.renew_failed` when a forced renewal ends, and `certificate.renew_cancelled` when a rollback stops one. Headers go out once the subscriber is registered, so no event published after the client has them is missed.
 
 Passkeys
 
@@ -122,10 +122,10 @@ Off until `Passkeys:RelyingPartyId` and `Passkeys:Origins` are set. A ceremony's
 | `POST /api/auth/passkey/options` | Anonymous. `{handle, options}` for `navigator.credentials.get`. |
 | `POST /api/auth/passkey` | Anonymous. `{handle, response}` verifies the assertion, sets the session cookie and returns `{csrfToken, expiresAt, user}`. Any failure is 401, audited with its reason. |
 | `GET /api/auth/session` | The session's `{csrfToken, expiresAt}`, so a reloaded page recovers its token. 404 for an API key. |
-| `POST /api/auth/logout` | Anonymous. Revokes a live session and clears the cookie. |
+| `POST /api/auth/logout` | Anonymous. Revokes a live session and clears the cookie. The UI signs out by reading the session's CSRF token and calling this, whichever credential it held, and says so on the sign-in view when the server does not confirm. |
 | `GET /api/passkeys` | The caller's passkeys: `id`, `name`, `createdAt`, `lastUsedAt`, `backedUp`. |
 | `POST /api/passkeys/options` | `{handle, options}` for `navigator.credentials.create`, excluding the caller's passkeys. 409 at 10 per user. |
-| `POST /api/passkeys` | `{handle, name, response}` registers the passkey to the caller. |
+| `POST /api/passkeys` | `{handle, name, response}` registers the passkey to the caller. 409 at 10 per user, counted in the transaction that adds it. |
 | `DELETE /api/passkeys/{id}` | Removes one of the caller's passkeys and ends the sessions it started. |
 
 Control service
@@ -152,7 +152,7 @@ Rules take an optional `routing` object. Omitted, routing is unchanged; sent, bo
 | `pathPrefix` | Serves only this path and below it, such as `/api`. Null or `/` serves the whole host. Letters, digits, `-`, `.`, `_`, `~` and `/`; a trailing slash is dropped. |
 | `stripPathPrefix` | Removes the prefix before proxying, so `/api/users` reaches the upstream as `/users`. |
 
-A host's rules match longest prefix first and the whole-host rule last, ignoring case as Caddy does. Host plus prefix is unique, all rules for a host share one TLS setting, and `skipAccessLog` applies to the host.
+A host's rules match longest prefix first and the whole-host rule last, ignoring case as Caddy does. Host plus prefix is unique among enabled rules, all enabled rules for a host share one TLS setting, and `skipAccessLog` applies to the host. A create, update or enable that breaks either answers 400, and apply refuses a set that breaks either, running or stopped.
 
 Rules take an optional `hardening` object. Omitted, nothing changes; sent, every field in it is replaced.
 
@@ -191,12 +191,12 @@ Each enabled TLS rule's host has a row, which the certificate monitor adds and r
 
 Alerts
 
-The server and certificate monitors raise alerts; each goes to every usable target subscribed to its type. A send gets three tries at most, 10 s each, 2 s then 10 s apart, retried on network errors, timeouts, 408, 429 and 5xx. Requests do not follow redirects.
+The server and certificate monitors raise alerts; each goes to every usable target subscribed to its type. Up to 100 wait for delivery; when the queue is full the oldest is dropped and logged. A send gets three tries at most, 10 s each, 2 s then 10 s apart, retried on network errors, timeouts, 408, 429 and 5xx. Requests do not follow redirects.
 
 | Type | Severity | Raised when |
 | --- | --- | --- |
 | `server.down` | critical | A server reads `Error` on `Alerts:ServerDownChecks` checks in a row. |
-| `server.up` | info | A server that alerted down reads `Active`. |
+| `server.up` | info | A server that alerted down reads `Active`. An `Inactive` or `Unknown` reading in between leaves it down. |
 | `certificate.expiring` | warning | A fresh reading is `Expiring`; once per expiry date. |
 | `certificate.expired` | critical | A fresh reading is `Expired`; once per expiry date. |
 | `certificate.failed` | warning | A fresh reading is `Failed`; once until the name reads `Valid`. |

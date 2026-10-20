@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, Rea
 import { AuthContextType, User, UserRole } from '../types';
 import useApiData from '../hooks/useApiData';
 import { Permission, roleCan } from '../utils/permissions';
-import { api, apiKeyStore, csrfStore, sessionsAvailable } from '../services/apiClient';
+import { api, ApiError, apiKeyStore, csrfStore, sessionsAvailable } from '../services/apiClient';
 import { getPasskey } from '../utils/webauthn';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,6 +26,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [authReady, setAuthReady] = useState(false);
     const [passkeysEnabled, setPasskeysEnabled] = useState(false);
+    const [authNotice, setAuthNotice] = useState<string | null>(null);
 
     // Resource data is fetched from the control-plane API once authenticated.
     const {
@@ -99,6 +100,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         try {
             const who = await api.whoami();
             setCurrentUser(userFromWhoAmI(who));
+            setAuthNotice(null);
         } catch (e) {
             apiKeyStore.clear();
             setCurrentUser(null);
@@ -115,16 +117,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const result = await api.auth.passkeySignIn(handle, response);
         csrfStore.set(result.csrfToken);
         setCurrentUser(userFromWhoAmI(result.user));
+        setAuthNotice(null);
     }, []);
 
-    // A passkey session is revoked on the server; an API key is only forgotten here.
+    // Sign-out ends every credential the browser holds: the API key is forgotten and any
+    // session on the cookie is revoked, with the CSRF token the server derives from it now.
     const logout = useCallback(async () => {
-        if (!apiKeyStore.get() && csrfStore.get()) {
-            try { await api.auth.logout(); } catch { /* the cookie expires on its own */ }
-        }
         apiKeyStore.clear();
         csrfStore.clear();
+        let notice: string | null = null;
+        if (sessionsAvailable()) {
+            try {
+                // 401 or 404: no session rides on this browser's cookie.
+                const session = await api.auth.session().catch((e: unknown) => {
+                    if (e instanceof ApiError && (e.status === 401 || e.status === 404)) return null;
+                    throw e;
+                });
+                if (session) {
+                    csrfStore.set(session.csrfToken);
+                    await api.auth.logout();
+                }
+            } catch {
+                notice = 'The server did not confirm the passkey session ended. It stays valid until it expires; sign in and sign out again to end it.';
+            }
+            csrfStore.clear();
+        }
         setCurrentUser(null);
+        setAuthNotice(notice);
     }, []);
 
     const switchUser = () => logout();
@@ -144,6 +163,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         currentUser,
         authReady,
         passkeysEnabled,
+        authNotice,
         users,
         login,
         loginWithPasskey,

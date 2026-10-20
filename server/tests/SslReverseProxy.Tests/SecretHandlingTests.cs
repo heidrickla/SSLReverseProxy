@@ -40,6 +40,24 @@ public class SecretRedactorTests
         foreach (var secret in new[] { "pepper-value-1234", "cf-token-value-1234", "http://ha.local:8123/api/webhook/hook-id-1234", "tk_ntfy-token-1234" })
             Assert.Equal("[redacted]", r.Redact(secret));
     }
+
+    [Fact]
+    public void FromConfiguration_CoversValuesAsTheyAreUsed()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Proxy:CloudflareApiToken"] = "  cf-token-value-1234\n",
+            ["Alerts:Targets:0:Url"] = " http://HA.Local:8123/api/webhook/hook-id-1234 ",
+            ["Alerts:Targets:0:Token"] = "tk_ntfy-token-1234 ",
+        }).Build();
+
+        var r = SecretRedactor.FromConfiguration(config);
+
+        // Caddy's environment gets the trimmed token; the sender requests the parsed URL.
+        Assert.Equal("Caddy said [redacted].", r.Redact("Caddy said cf-token-value-1234."));
+        Assert.Equal("POST [redacted] failed", r.Redact("POST http://ha.local:8123/api/webhook/hook-id-1234 failed"));
+        Assert.Equal("Bearer [redacted]", r.Redact("Bearer tk_ntfy-token-1234"));
+    }
 }
 
 public class CaddyEnvironmentTests
@@ -201,22 +219,24 @@ public class RulePlaceholderEndpointTests : IClassFixture<NewEndpointsIntegratio
         client.DefaultRequestHeaders.Add("X-Api-Key", _factory.AdminKey);
         var server = await (await client.PostAsJsonAsync("/api/servers", new { name = $"b-{Guid.NewGuid():N}", host = "10.0.0.9", os = "linux" }))
             .Content.ReadFromJsonAsync<IdOnly>();
+        // Each case its own host: the cases share one database, and enabled rules may not share a host and path.
+        var domain = $"{field.ToLowerInvariant()}.example.com";
 
         object Body(bool braced) => field switch
         {
             "basicAuthUsername" => new
             {
-                domain = "b.example.com", upstreamUrl = "http://10.0.0.20:8080", enableTls = true, enabled = true,
+                domain, upstreamUrl = "http://10.0.0.20:8080", enableTls = true, enabled = true,
                 basicAuthUsername = braced ? "{env.Security__ApiKeyPepper}" : "ops", basicAuthPassword = "pw",
             },
             "healthCheckPath" => new
             {
-                domain = "b.example.com", upstreamUrl = "http://10.0.0.20:8080", enableTls = true, enabled = true,
+                domain, upstreamUrl = "http://10.0.0.20:8080", enableTls = true, enabled = true,
                 hardening = new { healthCheckPath = braced ? "/{env.HOME}" : "/health" },
             },
             _ => new
             {
-                domain = "b.example.com", upstreamUrl = "https://10.0.0.20:8443", enableTls = true, enabled = true,
+                domain, upstreamUrl = "https://10.0.0.20:8443", enableTls = true, enabled = true,
                 hardening = new { upstreamTlsTrustedCaFile = braced ? "/{env.HOME}/ca.pem" : "/etc/ca.pem" },
             },
         };

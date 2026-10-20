@@ -3,7 +3,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import LoginView from './Auth';
 
-const auth = vi.hoisted(() => ({ login: vi.fn(), loginWithPasskey: vi.fn(), passkeysEnabled: true }));
+const auth = vi.hoisted(() => ({
+  login: vi.fn(), loginWithPasskey: vi.fn(), passkeysEnabled: true, authNotice: null as string | null,
+}));
 const supported = vi.hoisted(() => ({ value: true }));
 
 vi.mock('../contexts/AuthContext', () => ({ useAuth: () => auth }));
@@ -16,6 +18,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   auth.passkeysEnabled = true;
+  auth.authNotice = null;
   supported.value = true;
 });
 
@@ -47,5 +50,14 @@ describe('LoginView', () => {
     auth.loginWithPasskey.mockRejectedValueOnce(new Error('401'));
     fireEvent.click(button);
     expect(await screen.findByText(/Passkey sign-in failed/)).toBeTruthy();
+  });
+
+  it('shows a sign-out the server did not confirm', () => {
+    render(<LoginView />);
+    expect(screen.queryByRole('status')).toBeNull();
+    cleanup();
+    auth.authNotice = 'The server did not confirm the passkey session ended.';
+    render(<LoginView />);
+    expect(screen.getByRole('status').textContent).toBe(auth.authNotice);
   });
 });

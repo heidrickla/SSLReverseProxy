@@ -31,6 +31,8 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
     private readonly ProxyOptions _options;
     private readonly ILogger<CertificateMonitor> _logger;
     private readonly TimeSpan _interval;
+    // A forced renewal ended but Caddy has not taken the config without its policy; retried each cycle.
+    private bool _reapplyPending;
     private readonly Channel<bool> _wake =
         Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
 
@@ -157,14 +159,18 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
         foreach (var e in events) _events.Publish(e);
         foreach (var a in alerts) _alerts.Raise(a);
 
-        if (reapply && running)
+        // A stopped proxy holds no policy, and its next start builds the config from the rows.
+        _reapplyPending = running && (_reapplyPending || reapply);
+        if (_reapplyPending)
         {
             var status = await _proxy.ApplyConfigurationAsync(await db.LoadProxyPlanAsync(ct), ct);
-            if (status.State != ProxyState.Running)
-                _logger.LogWarning("Could not apply the config after a forced renewal ended: {Message}", status.Message);
+            if (status.State == ProxyState.Running)
+                _reapplyPending = false;
+            else
+                _logger.LogWarning("Could not apply the config after a forced renewal ended; retrying: {Message}", status.Message);
         }
 
-        return certs.Any(c => c.RenewFromSerial is not null);
+        return _reapplyPending || certs.Any(c => c.RenewFromSerial is not null);
     }
 
     /// <summary>

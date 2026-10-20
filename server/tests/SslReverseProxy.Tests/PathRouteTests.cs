@@ -173,6 +173,28 @@ public class PathRouteStructuralValidationTests
         Assert.False(result.Valid);
         Assert.Contains(result.Issues, i => i.Contains("disagree on TLS"));
     }
+
+    [Theory]
+    [InlineData("/api", "/API", true, true, "Duplicate route")]
+    [InlineData(null, "/api", true, false, "disagree on TLS")]
+    public async Task Apply_RefusesAConflictingPlan(string? first, string? second, bool tls1, bool tls2, string issue)
+    {
+        using var c = Controller();
+        var status = await c.ApplyConfigurationAsync(new ProxyPlan([Rule("a.example.com", first, tls1), Rule("A.example.com", second, tls2)]));
+        Assert.Equal(ProxyState.Faulted, status.State);
+        Assert.Contains(issue, status.Message);
+    }
+
+    [Fact]
+    public void ConflictWith_IgnoresTheRuleItself_AndDisabledRules()
+    {
+        var rule = Rule("a.example.com", "/api");
+        var parked = Rule("a.example.com", "/api");
+        parked.Enabled = false;
+        Assert.Null(RoutePath.ConflictWith(rule, [rule, parked, Rule("a.example.com", "/web")]));
+        Assert.Null(RoutePath.ConflictWith(parked, [rule]));
+        Assert.NotNull(RoutePath.ConflictWith(rule, [Rule("A.EXAMPLE.COM", "/API")]));
+    }
 }
 
 public class PathRouteEndpointTests : IClassFixture<NewEndpointsIntegrationTests.AuthedFactory>
@@ -198,10 +220,53 @@ public class PathRouteEndpointTests : IClassFixture<NewEndpointsIntegrationTests
         return (await resp.Content.ReadFromJsonAsync<IdOnly>())!.id;
     }
 
-    private static object Body(string domain, object? routing) => new
+    private static object Body(string domain, object? routing, bool tls = true, bool enabled = true) => new
     {
-        domain, upstreamUrl = "http://10.0.0.20:8080", enableTls = true, enabled = true, routing,
+        domain, upstreamUrl = "http://10.0.0.20:8080", enableTls = tls, enabled, routing,
     };
+
+    private static object Routed(string? prefix) => new { pathPrefix = prefix, stripPathPrefix = false };
+
+    [Fact]
+    public async Task ConflictingRules_AreRefusedOnCreateUpdateAndEnable()
+    {
+        var client = Authed();
+        var serverId = await NewServerAsync(client);
+        var otherServer = await NewServerAsync(client);
+        async Task<HttpResponseMessage> Create(Guid server, string domain, string? prefix, bool tls = true, bool enabled = true) =>
+            await client.PostAsJsonAsync($"/api/servers/{server}/rules", Body(domain, Routed(prefix), tls, enabled));
+        async Task<string> Refusal(HttpResponseMessage r)
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
+            return await r.Content.ReadAsStringAsync();
+        }
+
+        Assert.Equal(HttpStatusCode.Created, (await Create(serverId, "c1.example.com", "/api")).StatusCode);
+        // Same host and path in any case, on any server.
+        Assert.Contains("Duplicate route", await Refusal(await Create(otherServer, "C1.example.com", "/API")));
+        Assert.Contains("disagree on TLS", await Refusal(await Create(serverId, "c1.example.com", "/web", tls: false)));
+
+        // A disabled duplicate saves; enabling it is refused.
+        var parked = await Create(serverId, "c1.example.com", "/api", enabled: false);
+        Assert.Equal(HttpStatusCode.Created, parked.StatusCode);
+        var parkedId = (await parked.Content.ReadFromJsonAsync<RuleBody>())!.id;
+        Assert.Contains("Duplicate route", await Refusal(
+            await client.PatchAsJsonAsync($"/api/servers/{serverId}/rules/{parkedId}/enabled", new { enabled = true })));
+
+        // An update into a clash is refused; saving a rule unchanged is not a clash with itself.
+        var docs = (await (await Create(serverId, "c1.example.com", "/docs")).Content.ReadFromJsonAsync<RuleBody>())!;
+        async Task<HttpResponseMessage> Put(string? prefix)
+        {
+            var put = new HttpRequestMessage(HttpMethod.Put, $"/api/servers/{serverId}/rules/{docs.id}")
+            {
+                Content = JsonContent.Create(Body("c1.example.com", Routed(prefix))),
+            };
+            put.Headers.TryAddWithoutValidation("If-Match", $"\"{docs.version}\"");
+            return await client.SendAsync(put);
+        }
+        Assert.Contains("Duplicate route", await Refusal(await Put("/api")));
+        Assert.Equal(HttpStatusCode.OK, (await Put("/docs")).StatusCode);
+    }
 
     [Fact]
     public async Task Create_StoresTheNormalisedPrefix_AndPutWithoutRoutingKeepsIt()

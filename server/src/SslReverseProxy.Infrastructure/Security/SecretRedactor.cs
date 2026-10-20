@@ -38,9 +38,12 @@ public sealed class SecretRedactor
         foreach (var target in config.GetSection("Alerts:Targets").GetChildren())
         {
             values.Add(target["Url"]);
+            // The sender requests the parsed URL, whose host is lower-cased.
+            if (Uri.TryCreate(target["Url"]?.Trim(), UriKind.Absolute, out var url)) values.Add(url.AbsoluteUri);
             values.Add(target["Token"]);
         }
-        return new SecretRedactor(values);
+        // Each value as configured and trimmed, as Caddy's environment and the alert sender receive it.
+        return new SecretRedactor(values.SelectMany(v => new[] { v, v?.Trim() }));
     }
 
     public bool Contains(string? text) =>

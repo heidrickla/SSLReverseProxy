@@ -123,6 +123,19 @@ public static class ProxyEndpoints
 
             var status = await proxy.ApplyRawConfigAsync(snap.ConfigJson, ctx.RequestAborted);
             var ok = status.State == ProxyState.Running;
+            if (ok)
+            {
+                // Snapshots hold no renewal policy, so a renewal under way stops with the rollback.
+                var now = DateTimeOffset.UtcNow;
+                var pending = await db.Certificates.Where(c => c.RenewFromSerial != null).ToListAsync(ctx.RequestAborted);
+                foreach (var cert in pending)
+                {
+                    cert.RenewFromSerial = null;
+                    events.Publish(new ProxyEvent("certificate.renew_cancelled",
+                        $"Renewal of {cert.Domain} was cancelled by a rollback", now, me.Name));
+                }
+                await db.SaveChangesAsync(ctx.RequestAborted);
+            }
             await audit.AuditAsync(me, ctx, "Proxy Rollback", "Config Snapshot", snap.Id.ToString(),
                 success: ok, details: status.Message);
             events.Publish(new ProxyEvent("proxy.rollback", $"snapshot={snap.Id} state={status.State}", DateTimeOffset.UtcNow, me.Name));

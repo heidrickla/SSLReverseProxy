@@ -50,4 +50,38 @@ public static class RoutePath
     /// <summary>Key for "the same route": host and prefix, case-insensitive as Caddy matches both.</summary>
     public static string RouteKey(string domain, string? prefix) =>
         $"{domain.Trim().ToLowerInvariant()}{prefix?.ToLowerInvariant()}";
+
+    /// <summary>
+    /// Enabled rules on one host and path, or on one host with different TLS settings. Caddy serves
+    /// such a set with one rule shadowing the other, so writes, validation and apply refuse it.
+    /// </summary>
+    public static IEnumerable<string> Conflicts(IEnumerable<ProxyRule> rules)
+    {
+        var enabled = rules.Where(r => r.Enabled).ToList();
+        foreach (var g in enabled.GroupBy(r => RouteKey(r.Domain, r.PathPrefix)).Where(g => g.Count() > 1))
+            yield return Duplicate(g.First());
+        foreach (var g in enabled.GroupBy(r => r.Domain.Trim(), StringComparer.OrdinalIgnoreCase)
+                     .Where(g => g.Select(r => r.EnableTls).Distinct().Count() > 1))
+            yield return MixedTls(g.Key);
+    }
+
+    /// <summary>The conflict <paramref name="rule"/> would have with the other rules, or null.</summary>
+    public static string? ConflictWith(ProxyRule rule, IEnumerable<ProxyRule> others)
+    {
+        if (!rule.Enabled) return null;
+        var enabled = others.Where(o => o.Enabled && o.Id != rule.Id).ToList();
+        var key = RouteKey(rule.Domain, rule.PathPrefix);
+        if (enabled.Any(o => RouteKey(o.Domain, o.PathPrefix) == key)) return Duplicate(rule);
+        var host = rule.Domain.Trim();
+        return enabled.Any(o => string.Equals(o.Domain.Trim(), host, StringComparison.OrdinalIgnoreCase) && o.EnableTls != rule.EnableTls)
+            ? MixedTls(host)
+            : null;
+    }
+
+    private static string Duplicate(ProxyRule r) => r.PathPrefix is null
+        ? $"Duplicate domain '{r.Domain}' — only one whole-host rule per host is allowed."
+        : $"Duplicate route '{r.Domain}{r.PathPrefix}' — only one rule per host and path is allowed.";
+
+    private static string MixedTls(string host) =>
+        $"Rules for '{host}' disagree on TLS — every rule for a host must use the same setting.";
 }

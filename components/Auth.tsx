@@ -5,7 +5,7 @@ import Button from './Button';
 import { isCancelled, passkeysSupported } from '../utils/webauthn';
 
 const LoginView: React.FC = () => {
-    const { login, loginWithPasskey, passkeysEnabled } = useAuth();
+    const { login, loginWithPasskey, passkeysEnabled, authNotice } = useAuth();
     const [apiKey, setApiKey] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -52,6 +52,7 @@ const LoginView: React.FC = () => {
                     <p className="text-center text-sm text-on-surface-muted mb-8">
                         {offerPasskey ? 'Use a passkey or a control-plane API key.' : 'Authenticate with your control-plane API key.'}
                     </p>
+                    {authNotice && <p role="status" className="text-sm text-warning mb-6">{authNotice}</p>}
                     {offerPasskey && (
                         <>
                             <Button type="button" className="w-full" disabled={busy} onClick={handlePasskey}>

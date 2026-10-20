@@ -51,7 +51,7 @@ public static class PasskeyEndpoints
             if (!o.Value.Enabled) return NotConfigured();
             var ct = ctx.RequestAborted;
             if (!TryRead<AuthenticatorAssertionRawResponse>(body, out var handle, out var response))
-                return Results.BadRequest(new { message = "Expected {handle, response}." });
+                return await SignInFailed(audit, ctx, null, "malformed request");
 
             var json = challenges.Take(handle, PasskeyChallenges.Kind.SignIn, null);
             if (json is null)
@@ -149,8 +149,7 @@ public static class PasskeyEndpoints
             if (!o.Value.Enabled) return NotConfigured();
             if (await db.Users.FindAsync([me.UserId], ct) is not { } user) return Results.NotFound();
             var existing = await db.Passkeys.Where(p => p.UserId == user.Id).Select(p => p.CredentialId).ToListAsync(ct);
-            if (existing.Count >= MaxPerUser)
-                return Results.Conflict(new { message = $"A user may hold {MaxPerUser} passkeys; remove one first." });
+            if (existing.Count >= MaxPerUser) return TooMany();
 
             var options = fido2.RequestNewCredential(new RequestNewCredentialParams
             {
@@ -215,10 +214,15 @@ public static class PasskeyEndpoints
                 BackedUp = registered.IsBackedUp,
                 CreatedAt = clock.GetUtcNow(),
             };
+            // The count and the insert share one write transaction, so parallel ceremonies cannot pass the limit.
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            if (await db.Passkeys.CountAsync(p => p.UserId == user.Id, ct) >= MaxPerUser)
+                return TooMany();
             db.Passkeys.Add(passkey);
             try
             {
                 await db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
             }
             catch (DbUpdateException)
             {
@@ -266,6 +270,9 @@ public static class PasskeyEndpoints
     private static IResult Ceremony(string handle, string optionsJson) =>
         Results.Text(new JsonObject { ["handle"] = handle, ["options"] = JsonNode.Parse(optionsJson) }.ToJsonString(),
             "application/json");
+
+    private static IResult TooMany() =>
+        Results.Conflict(new { message = $"A user may hold {MaxPerUser} passkeys; remove one first." });
 
     private static IResult NotConfigured() =>
         Results.NotFound(new { message = "Passkeys are not configured (Passkeys:RelyingPartyId, Passkeys:Origins)." });

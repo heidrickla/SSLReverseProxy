@@ -94,6 +94,8 @@ export interface AuthContextType {
   authReady: boolean;
   /** The server offers passkey sign-in (Passkeys:RelyingPartyId is set). */
   passkeysEnabled: boolean;
+  /** Shown on the sign-in view: the last sign-out could not end the passkey session. */
+  authNotice: string | null;
   users: User[];
   login: (apiKey: string) => Promise<void>;
   loginWithPasskey: () => Promise<void>;

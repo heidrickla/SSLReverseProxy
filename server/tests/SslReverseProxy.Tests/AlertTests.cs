@@ -114,12 +114,13 @@ public class ServerAlertTrackerTests
     }
 
     [Fact]
-    public void Inactive_AndForget_EndADownStateSilently()
+    public void Inactive_KeepsADownServerDown_AndForgetEndsItSilently()
     {
         var t = new ServerAlertTracker(1);
         Assert.NotNull(t.Observe(Id, "web", Error, Now));
         Assert.Null(t.Observe(Id, "web", Inactive, Now));
-        Assert.Null(t.Observe(Id, "web", Active, Now));
+        Assert.Null(t.Observe(Id, "web", Error, Now));
+        Assert.Equal(AlertTypes.ServerUp, t.Observe(Id, "web", Active, Now)!.Type);
 
         Assert.NotNull(t.Observe(Id, "web", Error, Now));
         t.Forget(Id);
@@ -320,6 +321,33 @@ public class AlertSenderTests
         var result = await sender.SendAsync(bad, Down, CancellationToken.None);
         Assert.Equal((false, 0), (result.Delivered, result.Attempts));
         Assert.Equal(0, handler.Calls);
+    }
+}
+
+public class AlertDispatcherTests
+{
+    private sealed class NoHttp : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => throw new Xunit.Sdk.XunitException("No HTTP expected.");
+    }
+
+    [Fact]
+    public void AFullQueue_DropsTheOldestAlert_AndLogsIt()
+    {
+        var log = new ListLogger<AlertDispatcher>();
+        var options = Microsoft.Extensions.Options.Options.Create(new AlertOptions
+        {
+            Targets = [new() { Name = "ha", Kind = "webhook", Url = "https://ha.example.com/api/webhook/hook-0123" }],
+        });
+        // Not started, so nothing reads the queue.
+        var dispatcher = new AlertDispatcher(new AlertSender(new NoHttp(), TimeProvider.System, new ListLogger<AlertSender>()), options, log);
+        for (var i = 0; i <= 100; i++)
+            dispatcher.Raise(new Alert(AlertTypes.ServerDown, AlertSeverity.Critical, $"s{i}", "t", "m", DateTimeOffset.UnixEpoch));
+
+        Assert.Equal(100, dispatcher.Queued.Count);
+        Assert.True(dispatcher.Queued.TryRead(out var oldest));
+        Assert.Equal("s1", oldest.Subject);
+        Assert.Contains(log.Messages, m => m.Contains("s0") && m.Contains("dropped"));
     }
 }
 

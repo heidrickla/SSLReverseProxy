@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using SslReverseProxy.Api.Auth;
+using SslReverseProxy.Api.Endpoints;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
 using SslReverseProxy.Infrastructure.Persistence;
@@ -427,6 +428,37 @@ public class PasskeyTests : IDisposable
         // Another user's passkey cannot be deleted.
         var id = _factory.Db(db => db.Passkeys.Single().Id);
         Assert.Equal(HttpStatusCode.NotFound, (await editor.DeleteAsync($"/api/passkeys/{id}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task TheTenPasskeyLimit_HoldsAtCompletion()
+    {
+        var (keyed, userId) = _factory.WithKey(Role.Editor);
+        async Task<HttpResponseMessage> Complete(JsonNode begin) => await keyed.PostAsJsonAsync("/api/passkeys", new JsonObject
+        {
+            ["handle"] = (string)begin["handle"]!, ["response"] = new SoftAuthenticator().Create(begin["options"]!),
+        });
+        for (var i = 0; i < PasskeyEndpoints.MaxPerUser - 1; i++)
+            Assert.Equal(HttpStatusCode.Created, (await Complete(await Json(await keyed.PostAsync("/api/passkeys/options", null)))).StatusCode);
+
+        // Two ceremonies started at nine passkeys: the second to finish would make eleven.
+        var first = await Json(await keyed.PostAsync("/api/passkeys/options", null));
+        var second = await Json(await keyed.PostAsync("/api/passkeys/options", null));
+        Assert.Equal(HttpStatusCode.Created, (await Complete(first)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Complete(second)).StatusCode);
+        Assert.Equal(PasskeyEndpoints.MaxPerUser, _factory.Db(db => db.Passkeys.Count(p => p.UserId == userId)));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"handle\":\"x\",\"response\":\"not an object\"}")]
+    [InlineData("[]")]
+    public async Task MalformedSignIns_GetTheSameAuditedRefusal(string body)
+    {
+        var r = await _factory.Anonymous().PostAsync("/api/auth/passkey", new StringContent(body, Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode);
+        Assert.Equal("Passkey sign-in failed.", (string?)(await Json(r))["message"]);
+        Assert.True(_factory.Db(db => db.AuditEntries.Any(a => a.Action == "Passkey Sign-In" && !a.Success && a.Details == "malformed request")));
     }
 
     [Fact]

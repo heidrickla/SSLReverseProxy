@@ -53,4 +53,21 @@ test('a passkey registered in Settings signs in to a cookie session that survive
   expect(replay.status()).toBe(401);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
+
+  // An API key loaded beside a live session: sign-out forgets the key and revokes the session.
+  await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
+  await page.locator('aside nav').waitFor();
+  const second = (await page.context().cookies()).find(c => c.name === '__Host-sslrp-session');
+  expect(second?.value).not.toBe(cookie!.value);
+  const key = await adminKey();
+  await page.evaluate(k => sessionStorage.setItem('sslrp-api-key', k), key);
+  await page.reload();
+  await page.locator('aside nav').waitFor();
+  await page.getByRole('button', { name: /User Avatar/ }).click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
+  await expect(page.getByRole('status')).toHaveCount(0);
+  expect(await page.evaluate(() => sessionStorage.getItem('sslrp-api-key'))).toBeNull();
+  const replaySecond = await page.request.get('/api/whoami', { headers: { Cookie: `${second!.name}=${second!.value}` } });
+  expect(replaySecond.status()).toBe(401);
 });

@@ -16,13 +16,16 @@ public sealed class AlertDispatcher : BackgroundService, IAlertSink
 
     private readonly AlertSender _sender;
     private readonly ILogger<AlertDispatcher> _logger;
-    private readonly Channel<Alert> _queue = Channel.CreateBounded<Alert>(
-        new BoundedChannelOptions(QueueCapacity) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true });
+    private readonly Channel<Alert> _queue;
 
     public AlertDispatcher(AlertSender sender, IOptions<AlertOptions> options, ILogger<AlertDispatcher> logger)
     {
         _sender = sender;
         _logger = logger;
+        // When full, the oldest alert gives way: the newest says most about the current state.
+        _queue = Channel.CreateBounded<Alert>(
+            new BoundedChannelOptions(QueueCapacity) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true },
+            dropped => _logger.LogWarning("Alert queue is full; {Type} for {Subject} was dropped.", dropped.Type, dropped.Subject));
         Targets = AlertTargets.From(options.Value);
         foreach (var t in Targets.Where(t => !t.Usable))
             _logger.LogWarning("Alert target {Target} is not used: {Problem}", t.Name, t.Problem);
@@ -32,10 +35,11 @@ public sealed class AlertDispatcher : BackgroundService, IAlertSink
 
     public void Raise(Alert alert)
     {
-        if (!Targets.Any(t => t.Wants(alert.Type))) return;
-        if (!_queue.Writer.TryWrite(alert))
-            _logger.LogWarning("Alert queue is full; {Type} for {Subject} was dropped.", alert.Type, alert.Subject);
+        if (Targets.Any(t => t.Wants(alert.Type))) _queue.Writer.TryWrite(alert);
     }
+
+    /// <summary>Alerts waiting for delivery, oldest first; for tests.</summary>
+    internal ChannelReader<Alert> Queued => _queue.Reader;
 
     /// <summary>Sends a test alert to the named target, or to every usable target, and waits for the outcome.</summary>
     public Task<AlertDelivery[]> TestAsync(IEnumerable<AlertTarget> targets, string actor, DateTimeOffset now, CancellationToken ct) =>

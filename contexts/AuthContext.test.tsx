@@ -158,18 +158,68 @@ describe('AuthProvider passkey sessions', () => {
     expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it('revokes the session on sign-out, and forgets a key without calling the server', async () => {
+  it('revokes the session on sign-out with the CSRF token the server derives now', async () => {
     mocks.session.mockResolvedValue({ csrfToken: 'csrf-1', expiresAt: '2026-10-21T00:00:00Z' });
-    mocks.logout.mockResolvedValue(undefined);
     await renderApp();
+    csrfStore.set('csrf-stale');
+    let sent: (string | null)[] = [];
+    mocks.logout.mockImplementation(async () => { sent = [csrfStore.get(), sessionStorage.getItem(KEY)]; });
     await act(() => auth.logout());
     expect(mocks.logout).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual(['csrf-1', null]);
     expect(csrfStore.get()).toBeNull();
+    expect(auth.authNotice).toBeNull();
     expect(screen.getByTestId('probe').textContent).toBe('signed-out');
+  });
+
+  it.each([
+    ['an API-key sign-in over a live session', async () => {
+      mocks.session.mockResolvedValue({ csrfToken: 'csrf-1', expiresAt: '2026-10-21T00:00:00Z' });
+      await renderApp();
+      await act(() => auth.login('srp.k.x'));
+    }],
+    ['a stored key loaded beside a live session', async () => {
+      sessionStorage.setItem(KEY, 'srp.stored.key');
+      await renderApp();
+      mocks.session.mockResolvedValue({ csrfToken: 'csrf-1', expiresAt: '2026-10-21T00:00:00Z' });
+    }],
+  ])('sign-out after %s forgets the key and revokes the session', async (_case, arrange) => {
+    await arrange();
+    expect(csrfStore.get()).toBeNull();
+    let sent: (string | null)[] = [];
+    mocks.logout.mockImplementation(async () => { sent = [csrfStore.get(), sessionStorage.getItem(KEY)]; });
+    await act(() => auth.logout());
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual(['csrf-1', null]);
+    expect(sessionStorage.getItem(KEY)).toBeNull();
+    expect(auth.authNotice).toBeNull();
+  });
+
+  it.each([[401], [404]])('with no session on the cookie (%i), sign-out only forgets the key', async (status) => {
+    sessionStorage.setItem(KEY, 'srp.stored.key');
+    await renderApp();
+    mocks.session.mockRejectedValue(new ApiError(status, 'no session'));
+    await act(() => auth.logout());
+    expect(mocks.logout).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(KEY)).toBeNull();
+    expect(auth.authNotice).toBeNull();
+    expect(screen.getByTestId('probe').textContent).toBe('signed-out');
+  });
+
+  it.each([
+    ['the revocation fails', () => mocks.logout.mockRejectedValue(new ApiError(403, 'Forbidden'))],
+    ['the server is unreachable', () => mocks.logout.mockRejectedValue(new TypeError('Failed to fetch'))],
+    ['the session lookup fails', () => mocks.session.mockRejectedValue(new ApiError(503, 'Unavailable'))],
+  ])('reports a sign-out the server did not confirm when %s, until the next sign-in', async (_case, fail) => {
+    mocks.session.mockResolvedValue({ csrfToken: 'csrf-1', expiresAt: '2026-10-21T00:00:00Z' });
+    await renderApp();
+    fail();
+    await act(() => auth.logout());
+    expect(screen.getByTestId('probe').textContent).toBe('signed-out');
+    expect(csrfStore.get()).toBeNull();
+    expect(auth.authNotice).toMatch(/did not confirm the passkey session ended/);
 
     await act(() => auth.login('srp.k.x'));
-    await act(() => auth.logout());
-    expect(mocks.logout).toHaveBeenCalledTimes(1);
-    expect(sessionStorage.getItem(KEY)).toBeNull();
+    expect(auth.authNotice).toBeNull();
   });
 });

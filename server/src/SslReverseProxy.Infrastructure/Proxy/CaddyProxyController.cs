@@ -147,13 +147,14 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         await _gate.WaitAsync(ct);
         try
         {
+            // Refused whatever the process state, so a stopped proxy reports why its rules cannot load.
+            if (RoutePath.Conflicts(rules).Concat(PlaceholderIssues(rules)).FirstOrDefault() is { } refused)
+                return Faulted(refused);
+
             if (_process is null || _process.HasExited)
                 return _process is null && !BinaryAvailable()
                     ? Unavailable("Caddy is not installed.")
                     : Stopped("Proxy is stopped; start it before applying configuration.");
-
-            if (PlaceholderIssues(rules).FirstOrDefault() is { } refused)
-                return Faulted(refused);
             var config = CaddyConfigBuilder.Build(plan, _options);
             var ok = await PostConfigAsync(config, ct);
             if (!ok)
@@ -175,19 +176,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
 
         // Structural checks always run, regardless of whether Caddy is installed.
         var enabled = rules.Where(r => r.Enabled).ToList();
-        var dupes = enabled.GroupBy(r => RoutePath.RouteKey(r.Domain, r.PathPrefix))
-            .Where(g => g.Count() > 1).Select(g => g.First());
-        foreach (var d in dupes)
-            issues.Add(d.PathPrefix is null
-                ? $"Duplicate domain '{d.Domain}' — only one whole-host rule per host is allowed."
-                : $"Duplicate route '{d.Domain}{d.PathPrefix}' — only one rule per host and path is allowed.");
-
-        // A host is served by one Caddy server, so its rules cannot disagree on TLS.
-        var mixed = enabled.GroupBy(r => r.Domain.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Select(r => r.EnableTls).Distinct().Count() > 1).Select(g => g.Key);
-        foreach (var d in mixed)
-            issues.Add($"Rules for '{d}' disagree on TLS — every rule for a host must use the same setting.");
-
+        issues.AddRange(RoutePath.Conflicts(enabled));
         issues.AddRange(PlaceholderIssues(enabled));
 
         foreach (var r in enabled)
