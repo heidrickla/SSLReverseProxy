@@ -379,6 +379,50 @@ public class CertificateMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task FreshReadings_AlertOncePerExpiry()
+    {
+        await AddRule("a.example.com");
+        var served = Serve("a.example.com", "0A", daysLeft: 10);
+        await Check();
+        await Check();
+        Assert.Equal(["certificate.expiring:a.example.com"], _factory.Alerts.Raised.Select(a => $"{a.Type}:{a.Subject}"));
+
+        // A stopped proxy gives no fresh reading, so the stored status raises nothing.
+        _factory.Proxy.State = ProxyState.Stopped;
+        _factory.Clock.Advance(TimeSpan.FromDays(11));
+        await Check();
+        Assert.Single(_factory.Alerts.Raised);
+
+        _factory.Proxy.State = ProxyState.Running;
+        await Check();
+        Assert.Equal("certificate.expired", _factory.Alerts.Raised[^1].Type);
+        var row = await Row("a.example.com");
+        Assert.Equal((CertificateStatus.Expired, served.NotAfter), (row!.AlertedStatus, row.AlertedExpiresAt));
+    }
+
+    [Fact]
+    public async Task StoredStatus_DoesNotAlertWithoutAFreshReading()
+    {
+        await WithDb(async db =>
+        {
+            db.Certificates.Add(new Certificate
+            {
+                Domain = "old.example.com", Status = CertificateStatus.Expiring,
+                ExpiresAt = _factory.Clock.GetUtcNow().AddDays(3),
+            });
+            return await db.SaveChangesAsync();
+        });
+        _factory.Proxy.State = ProxyState.Stopped;
+        await Check();
+        Assert.Empty(_factory.Alerts.Raised);
+
+        _factory.Proxy.State = ProxyState.Running;
+        Serve("old.example.com", "0B", daysLeft: 3);
+        await Check();
+        Assert.Equal("certificate.expiring", Assert.Single(_factory.Alerts.Raised).Type);
+    }
+
+    [Fact]
     public async Task StoppedProxy_LeavesTheLastReading()
     {
         await AddRule("a.example.com");
@@ -585,6 +629,7 @@ internal sealed class CertificateFactory(string? cloudflareToken) : WebApplicati
     public FakeProbe Probe { get; } = new();
     public ManualClock Clock { get; } = new(new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero));
     public RecordingEvents Events { get; } = new();
+    public RecordingAlerts Alerts { get; } = new();
     public CaddyCertificateLog Log => Services.GetRequiredService<CaddyCertificateLog>();
 
     public HttpClient Authed()
@@ -612,6 +657,8 @@ internal sealed class CertificateFactory(string? cloudflareToken) : WebApplicati
             s.AddSingleton<TimeProvider>(Clock);
             s.RemoveAll<IEventStream>();
             s.AddSingleton<IEventStream>(Events);
+            s.RemoveAll<IAlertSink>();
+            s.AddSingleton<IAlertSink>(Alerts);
         });
 
     protected override IHost CreateHost(IHostBuilder builder)

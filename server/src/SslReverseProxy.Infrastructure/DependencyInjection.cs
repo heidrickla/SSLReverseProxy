@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Security;
+using SslReverseProxy.Infrastructure.Alerts;
 using SslReverseProxy.Infrastructure.Audit;
 using SslReverseProxy.Infrastructure.Persistence;
 using SslReverseProxy.Infrastructure.Proxy;
@@ -41,6 +42,13 @@ public static class DependencyInjection
 
         services.AddHttpClient("caddy-admin");
         services.AddHttpClient("upstream-health");
+
+        services.Configure<AlertOptions>(config.GetSection(AlertOptions.SectionName));
+        services.AddHttpClient(AlertSender.ClientName, c => c.Timeout = AlertSender.RequestTimeout)
+            // The factory's logging handlers write the request URL, which is a secret for these targets.
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddSingleton<AlertSender>();
         services.AddSingleton<TrafficRecorder>();
         services.AddSingleton<CaddyCertificateLog>();
         services.AddSingleton<ICertificateProbe, TlsCertificateProbe>();

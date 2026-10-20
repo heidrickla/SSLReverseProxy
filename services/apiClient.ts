@@ -144,6 +144,9 @@ export interface ApiCertificate {
   renewPending: boolean; managed: boolean;
 }
 /** A validation method and whether the server can use it now. */
+export interface AlertTarget { name: string; kind: string; events: string[]; problem: string | null; }
+export interface AlertsInfo { targets: AlertTarget[]; events: string[]; }
+export interface AlertDelivery { target: string; delivered: boolean; status: number | null; error: string | null; attempts: number; }
 export interface CertificateChallenge { name: ChallengeName; available: boolean; wildcard: boolean; reason: string | null; }
 export interface ApiUser { id: string; name: string; email: string; role: string; isActive: boolean; lastSeenAt: string | null; }
 export interface ApiAuditEntry { id: number; timestamp: string; actor: string; action: string; targetType: string; targetName: string; success: boolean; sourceIp: string | null; }
@@ -221,6 +224,12 @@ export const api = {
     // 202 once the renewal is under way; the row's renewPending clears when a new certificate is served.
     renew: (id: string) => request<ApiCertificate>('POST', `/api/certificates/${id}/renew`),
     challenges: () => request<CertificateChallenge[]>('GET', '/api/certificates/challenges'),
+  },
+
+  // Targets are server configuration; the API lists them without URLs or tokens.
+  alerts: {
+    list: () => request<AlertsInfo>('GET', '/api/alerts'),
+    test: (target: string) => request<AlertDelivery[]>('POST', '/api/alerts/test', { target }),
   },
 
   users: {

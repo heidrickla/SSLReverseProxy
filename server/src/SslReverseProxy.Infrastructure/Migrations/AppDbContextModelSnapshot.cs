@@ -122,6 +122,12 @@ namespace SslReverseProxy.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTimeOffset?>("AlertedExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("AlertedStatus")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Algorithm")
                         .HasColumnType("TEXT");
 

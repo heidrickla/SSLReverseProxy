@@ -248,6 +248,10 @@ public class Certificate
     public DateTimeOffset? RenewRequestedAt { get; set; }
     /// <summary>Set while a forced renewal waits for a certificate with another serial than this one.</summary>
     public string? RenewFromSerial { get; set; }
+    /// <summary>The status the last alert was sent for; cleared when the name reads Valid.</summary>
+    public CertificateStatus? AlertedStatus { get; set; }
+    /// <summary>The expiry the last expiring or expired alert was sent for.</summary>
+    public DateTimeOffset? AlertedExpiresAt { get; set; }
 }
 
 /// <summary>Append-only audit record. Rows are never updated or deleted.</summary>

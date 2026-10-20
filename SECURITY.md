@@ -19,6 +19,6 @@ The React SPA reads and writes everything through the control plane in [`server/
 | --- | --- |
 | Authentication | API keys (`X-Api-Key` or Bearer) stored as PBKDF2-SHA256 hashes with a per-key salt and a server pepper, verified in constant time, revocable. Optional mutual TLS pinned to client-certificate thumbprints. |
 | Authorization | Deny-by-default policies map roles to permissions on every endpoint (`server/src/SslReverseProxy.Core/Security/Permissions.cs`). |
-| Secret custody | Certificates are issued and renewed by Caddy (ACME). The pepper and TLS material come from configuration, user-secrets or the environment, never source. |
+| Secret custody | Certificates are issued and renewed by Caddy (ACME). The pepper, the Cloudflare token, alert target URLs and tokens, and TLS material come from configuration, user-secrets or the environment, never source, and the API never returns them. The browser stores none of them. |
 | SSRF | `ProxyTargetValidator` re-validates every upstream before config reaches the proxy: `http(s)` only, cloud-metadata and link-local blocked, private and loopback gated by policy. |
 | Headers | `SecurityHeadersMiddleware` sends a JSON-only CSP and hardening headers on every response; HSTS and HTTPS redirect in Production. |

@@ -17,7 +17,8 @@ export type Permission =
   | 'cert:create'
   | 'cert:delete'
   | 'user:create'
-  | 'user:update';
+  | 'user:update'
+  | 'alert:manage';
 
 const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   Viewer: [],
@@ -40,6 +41,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'cert:delete',
     'user:create',
     'user:update',
+    'alert:manage',
   ],
 };
 

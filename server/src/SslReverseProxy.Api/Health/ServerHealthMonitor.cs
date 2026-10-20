@@ -2,8 +2,10 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SslReverseProxy.Api.Alerts;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
+using SslReverseProxy.Infrastructure.Alerts;
 using SslReverseProxy.Infrastructure.Persistence;
 using SslReverseProxy.Infrastructure.Proxy;
 
@@ -21,6 +23,8 @@ public sealed class ServerHealthMonitor : BackgroundService, IServerHealthStore
     private readonly IServiceScopeFactory _scopes;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly IEventStream _events;
+    private readonly IAlertSink _alerts;
+    private readonly ServerAlertTracker _tracker;
     private readonly TimeProvider _clock;
     private readonly ILogger<ServerHealthMonitor> _logger;
     private readonly TimeSpan _interval;
@@ -29,12 +33,15 @@ public sealed class ServerHealthMonitor : BackgroundService, IServerHealthStore
         Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
 
     public ServerHealthMonitor(
-        IServiceScopeFactory scopes, IHostApplicationLifetime lifetime, IEventStream events,
-        TimeProvider clock, IOptions<ProxyOptions> options, ILogger<ServerHealthMonitor> logger)
+        IServiceScopeFactory scopes, IHostApplicationLifetime lifetime, IEventStream events, IAlertSink alerts,
+        TimeProvider clock, IOptions<ProxyOptions> options, IOptions<AlertOptions> alertOptions,
+        ILogger<ServerHealthMonitor> logger)
     {
         _scopes = scopes;
         _lifetime = lifetime;
         _events = events;
+        _alerts = alerts;
+        _tracker = new ServerAlertTracker(alertOptions.Value.ServerDownChecks);
         _clock = clock;
         _logger = logger;
         _interval = TimeSpan.FromSeconds(Math.Max(0, options.Value.ServerHealthIntervalSeconds));
@@ -104,7 +111,10 @@ public sealed class ServerHealthMonitor : BackgroundService, IServerHealthStore
 
         var current = servers.Select(s => s.Id).ToHashSet();
         foreach (var gone in _health.Keys.Where(id => !current.Contains(id)))
+        {
             _health.TryRemove(gone, out _);
+            _tracker.Forget(gone);
+        }
     }
 
     private async Task CheckServerAsync(
@@ -131,5 +141,7 @@ public sealed class ServerHealthMonitor : BackgroundService, IServerHealthStore
         if (previous.Status != health.Status)
             _events.Publish(new ProxyEvent(
                 "server.health", $"{server.Name} is {health.Status.ToString().ToLowerInvariant()}", now, null));
+        if (_tracker.Observe(server.Id, server.Name, health, now) is { } alert)
+            _alerts.Raise(alert);
     }
 }

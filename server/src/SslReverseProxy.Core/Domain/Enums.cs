@@ -20,6 +20,7 @@ public enum Permission
     UserWrite,
     ApiKeyManage,
     AuditRead,
+    AlertManage,    // list alert targets and send test alerts
 }
 
 /// <summary>Lifecycle state of the managed reverse-proxy process.</summary>

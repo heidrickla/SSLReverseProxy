@@ -61,6 +61,12 @@ public interface ICertificateChecks
     void RequestCheck();
 }
 
+/// <summary>Queues an alert for every target subscribed to its type. Never blocks.</summary>
+public interface IAlertSink
+{
+    void Raise(Alert alert);
+}
+
 public sealed record UpstreamHealth(bool Reachable, int? StatusCode, long? LatencyMs, string? Error);
 
 /// <summary>Server status kept by the background health monitor.</summary>

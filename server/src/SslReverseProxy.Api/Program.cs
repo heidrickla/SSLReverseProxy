@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
+using SslReverseProxy.Api.Alerts;
 using SslReverseProxy.Api.Auth;
 using SslReverseProxy.Api.Endpoints;
 using SslReverseProxy.Api.Health;
@@ -42,6 +43,9 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentPrincipal, CurrentPrincipal>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
+builder.Services.AddSingleton<AlertDispatcher>();
+builder.Services.AddSingleton<IAlertSink>(sp => sp.GetRequiredService<AlertDispatcher>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertDispatcher>());
 builder.Services.AddSingleton<ServerHealthMonitor>();
 builder.Services.AddSingleton<IServerHealthStore>(sp => sp.GetRequiredService<ServerHealthMonitor>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerHealthMonitor>());
@@ -145,6 +149,7 @@ app.MapProxyEndpoints();
 app.MapServerEndpoints();
 app.MapAdminEndpoints();
 app.MapCertificateEndpoints();
+app.MapAlertEndpoints();
 
 // Seed:Demo fills a new Development database with sample data, for screenshots and the browser smoke test.
 var seedDemo = app.Configuration.GetValue<bool>("Seed:Demo");

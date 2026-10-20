@@ -119,6 +119,11 @@ public sealed record CreateCertificateRequest(string Domain, string? Challenge);
 public sealed record UpdateCertificateRequest(string Challenge);
 /// <summary>A validation method and whether the server can use it now. Never carries the token.</summary>
 public sealed record ChallengeDto(string Name, bool Available, bool Wildcard, string? Reason);
+/// <summary>A configured alert target. Never carries the URL or token.</summary>
+public sealed record AlertTargetDto(string Name, string Kind, IReadOnlyList<string> Events, string? Problem);
+public sealed record AlertsDto(IReadOnlyList<AlertTargetDto> Targets, IReadOnlyList<string> Events);
+public sealed record AlertTestRequest(string? Target);
+public sealed record AlertDeliveryDto(string Target, bool Delivered, int? Status, string? Error, int Attempts);
 public sealed record UserDto(Guid Id, string Name, string Email, string Role, bool IsActive, DateTimeOffset? LastSeenAt);
 public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt);
 public sealed record IssuedApiKeyDto(Guid Id, string Name, string Token, DateTimeOffset? ExpiresAt);

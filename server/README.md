@@ -26,7 +26,7 @@ The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a
 | Transport | HSTS and HTTPS redirect in Production; security headers and a JSON-only CSP on every response. |
 | Abuse | Per-IP fixed-window rate limit, `Security:RequestsPerMinute` (100). |
 | Audit | Append-only log of every control and mutation action (actor, action, target, source IP). |
-| Secrets | Pepper, Cloudflare token, client-certificate thumbprints and ACME email from configuration, user-secrets or environment. The Cloudflare token stays on the server: the UI asks only which validation methods are available. Configured secret values are masked in Caddy's forwarded output, `/load` errors and validation issues, and a rollback config holding one is refused. |
+| Secrets | Pepper, Cloudflare token, alert target URLs and tokens, client-certificate thumbprints and ACME email from configuration, user-secrets or environment. The Cloudflare token stays on the server: the UI asks only which validation methods are available. Configured secret values are masked in Caddy's forwarded output, `/load` errors and validation issues, and a rollback config holding one is refused. Alert URLs and tokens are never returned by the API or logged. |
 | Caddy process | Started with a fixed environment: system paths, its data and config directories, outbound proxy and trust-store variables, and the Cloudflare token when set. Rule text may not contain `{` or `}`, which Caddy reads as placeholders. |
 
 ## Configuration
@@ -57,6 +57,8 @@ The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a
 | `Proxy:TlsMinVersion`, `Proxy:TlsCipherSuites` | Data-plane TLS floor: `tls1.2` or `tls1.3`; any other value is treated as `tls1.2`. A cipher name Caddy does not know fails the whole config load, so run `POST /api/proxy/validate` after changing the list. |
 | `Proxy:ReadHeaderTimeoutSeconds`, `Proxy:ReadTimeoutSeconds`, `Proxy:WriteTimeoutSeconds`, `Proxy:IdleTimeoutSeconds` | Data-plane timeouts; 0 keeps Caddy's default, which for read and write is none. |
 | `Proxy:AccessLogPath`, `AccessLogRollSizeMb`, `AccessLogKeepDays` | Data-plane access log as JSON lines. Off by default: records carry client IPs and URLs. |
+| `Alerts:Targets` | Where alerts go: each has `Name`, `Kind` (`webhook` or `ntfy`), `Url`, optional `Token` and `Events` (empty sends every type). URL and token are secrets; set them through the environment (`Alerts__Targets__0__Url`). A target that fails validation is listed with the reason and not sent to. |
+| `Alerts:ServerDownChecks` | Consecutive `Error` readings before a server alerts as down (2). |
 | `Seed:Demo` | Development only: fills a new database with demo servers, rules, certificates, users and audit entries. Upstreams point at `Seed:DemoUpstreamBase` (default `http://127.0.0.1:5195`, this API under the `http` launch profile) and the discard port, so the three servers come up `Active`, `Error` and `Inactive`. Ignored with a warning elsewhere. |
 
 Secrets locally:
@@ -157,13 +159,54 @@ Each enabled TLS rule's host has a row, which the certificate monitor adds and r
 
 | Endpoint | |
 | --- | --- |
-| `GET /api/certificates` | Rows with status from the served certificate's dates: `Valid`, `Expiring` (30 days or less), `Expired`, `Issuing` (none served yet), `Failed` (Caddy logged an error and none is served) or `Unknown` (not read yet). `lastError` is Caddy's last error for the name, redacted. |
+| `GET /api/certificates` | Rows with status from the served certificate's dates: `Valid`, `Expiring` (the last third of its lifetime, at most 30 days), `Expired`, `Issuing` (none served yet), `Failed` (Caddy logged an error and none is served) or `Unknown` (not read yet). `lastError` is Caddy's last error for the name, redacted. |
 | `GET /api/certificates/challenges` | `Http` and `DnsCloudflare`, each with whether it can be used now, why not, and whether it validates a wildcard. |
 | `POST /api/certificates` | `{domain, challenge}` adds a manual row. A wildcard needs `DnsCloudflare` unless `CertificateIssuer` is `internal`, and `DnsCloudflare` needs a usable token. 409 when the name has a row. |
 | `PUT /api/certificates/{id}` | `{challenge}` changes how the name is validated, for rule rows too. |
 | `DELETE /api/certificates/{id}` | Manual rows only; a rule row goes with its rule. |
 | `POST /api/certificates/{id}/renew` | Forces a reissue. The config marks the name due for renewal, Caddy replaces the certificate in place while the old one keeps serving, and the monitor drops the mark once a new serial is served or after `RenewTimeoutMinutes`. 409 while the proxy is stopped, the monitor is off, a renewal is under way, no certificate is served, or within `RenewMinimumAgeMinutes` of the last request. Snapshots are taken without the mark, so a rollback does not renew again. |
 | `GET /api/certificates/{id}/status` | Status and days remaining. |
+
+Alerts
+
+The server and certificate monitors raise alerts; each goes to every usable target subscribed to its type. A send gets three tries at most, 10 s each, 2 s then 10 s apart, retried on network errors, timeouts, 408, 429 and 5xx. Requests do not follow redirects.
+
+| Type | Severity | Raised when |
+| --- | --- | --- |
+| `server.down` | critical | A server reads `Error` on `Alerts:ServerDownChecks` checks in a row. |
+| `server.up` | info | A server that alerted down reads `Active`. |
+| `certificate.expiring` | warning | A fresh reading is `Expiring`; once per expiry date. |
+| `certificate.expired` | critical | A fresh reading is `Expired`; once per expiry date. |
+| `certificate.failed` | warning | A fresh reading is `Failed`; once until the name reads `Valid`. |
+
+Server down state is kept in memory, so after a restart a server still down alerts again. Certificate alert state is stored on the row.
+
+| Kind | Request |
+| --- | --- |
+| `webhook` | `POST` to `Url` with `{type, severity, subject, title, message, at}`. |
+| `ntfy` | `POST` to the ntfy server root with `{topic, title, message, priority, tags}`; the topic is the URL's last segment (`https://ntfy.sh/<topic>`). Priority 5 critical, 4 warning, 3 info. |
+
+`Token` goes out as `Authorization: Bearer`. A Home Assistant automation for a `webhook` target with `Url` `http://homeassistant.local:8123/api/webhook/<id>`:
+
+```yaml
+triggers:
+  - trigger: webhook
+    webhook_id: <id>
+    allowed_methods: [POST]
+    local_only: true
+actions:
+  - action: notify.notify
+    data:
+      title: "{{ trigger.json.title }}"
+      message: "{{ trigger.json.message }}"
+```
+
+| Endpoint | |
+| --- | --- |
+| `GET /api/alerts` | Targets with name, kind, events and any validation problem, and the subscribable types. |
+| `POST /api/alerts/test` | `{target}` sends a test alert to that target, or to every usable target when omitted, and returns each delivery: `delivered`, `status`, `error`, `attempts`. Audited. |
+
+Both need `AlertManage` (Admin).
 
 Users, keys, audit
 
@@ -176,7 +219,7 @@ Users, keys, audit
 - Secrets: `Security__ApiKeyPepper` (random, base64) through the environment or user-secrets; Production logs a warning when it is unset. ACME email and client-certificate thumbprints the same way.
 - TLS: HSTS and HTTPS redirect are on in Production. Terminate TLS (or mTLS) for the control API at the edge, and put it behind an authenticating gateway or set `Security:RequireMutualTls`.
 - Behind a proxy: list it in `Security:TrustedProxies` (IP or CIDR) so the rate limiter and audit log see the client IP from `X-Forwarded-For`.
-- Containers: the [`Dockerfile`](Dockerfile) bundles the API with Caddy and its plugins; the API runs Caddy as a child process. The database, proxy config and Caddy's certificates live in `/data`, a volume in [`docker-compose.yml`](docker-compose.yml). Environment: `SSLRP_API_KEY_PEPPER`, optional `SSLRP_ACME_EMAIL`, `SSLRP_CLOUDFLARE_API_TOKEN` and `SSLRP_SPA_ORIGIN`.
+- Containers: the [`Dockerfile`](Dockerfile) bundles the API with Caddy and its plugins; the API runs Caddy as a child process. The database, proxy config and Caddy's certificates live in `/data`, a volume in [`docker-compose.yml`](docker-compose.yml). Environment: `SSLRP_API_KEY_PEPPER`, optional `SSLRP_ACME_EMAIL`, `SSLRP_CLOUDFLARE_API_TOKEN` and `SSLRP_SPA_ORIGIN`. Alert targets go in the service's environment as `Alerts__Targets__<n>__<Key>`.
 
 ## Frontend
 

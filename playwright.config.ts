@@ -13,6 +13,8 @@ export const e2eDatabase = path.join(os.tmpdir(), `sslrp-e2e-${process.env.SSLRP
 // It listens on unprivileged ports and issues from its own CA, with its config and data under the run's temp directory.
 export const caddyPath = process.env.SSLRP_TEST_CADDY || undefined;
 export const proxyHttpPort = 8780;
+// e2e/alerts.spec.ts listens here for the run's alert target.
+export const alertListenerPort = 8790;
 const proxyHttpsPort = 8743;
 const proxyDir = path.join(os.tmpdir(), `sslrp-e2e-${process.env.SSLRP_E2E_RUN}-proxy`);
 
@@ -46,6 +48,12 @@ export default defineConfig({
         Proxy__CertificateCheckSeconds: '2',
         Proxy__RenewCheckSeconds: '2',
         Proxy__RenewMinimumAgeMinutes: '0',
+        Alerts__Targets__0__Name: 'e2e',
+        Alerts__Targets__0__Kind: 'webhook',
+        Alerts__Targets__0__Url: `http://127.0.0.1:${alertListenerPort}/api/webhook/e2e-hook`,
+        Alerts__Targets__0__Token: 'e2e-alert-token',
+        // No demo server comes back up, so the run sends this target test alerts only.
+        Alerts__Targets__0__Events__0: 'server.up',
         Proxy__ConfigDirectory: path.join(proxyDir, 'config'),
         XDG_DATA_HOME: path.join(proxyDir, 'data'),
       },

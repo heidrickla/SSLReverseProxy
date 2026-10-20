@@ -4,6 +4,8 @@ import PaintBrushIcon from '../components/icons/PaintBrushIcon';
 import Button from '../components/Button';
 import ThemeEditor from '../components/ThemeEditor';
 import XIcon from '../components/icons/XIcon';
+import AlertsCard from '../components/AlertsCard';
+import { useAuth } from '../contexts/AuthContext';
 
 const Settings: React.FC = () => {
   const { 
@@ -12,6 +14,7 @@ const Settings: React.FC = () => {
     allThemes, deleteTheme,
     scale, setScale 
   } = useTheme();
+  const { hasPermission } = useAuth();
   const [isEditorOpen, setIsEditorOpen] = useState(false);
 
   const lightThemes = allThemes.filter(t => t.type === 'light');
@@ -111,6 +114,8 @@ const Settings: React.FC = () => {
           <p className="text-sm text-on-surface-muted py-2">Themes you create appear here.</p>
         )}
       </div>
+
+      {hasPermission('alert:manage') && <AlertsCard />}
 
       {isEditorOpen && <ThemeEditor onClose={() => setIsEditorOpen(false)} />}
     </div>

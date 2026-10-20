@@ -26,6 +26,7 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
     private readonly ICertificateProbe _probe;
     private readonly CaddyCertificateLog _log;
     private readonly IEventStream _events;
+    private readonly IAlertSink _alerts;
     private readonly TimeProvider _clock;
     private readonly ProxyOptions _options;
     private readonly ILogger<CertificateMonitor> _logger;
@@ -35,7 +36,7 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
 
     public CertificateMonitor(
         IServiceScopeFactory scopes, IHostApplicationLifetime lifetime, IProxyController proxy,
-        ICertificateProbe probe, CaddyCertificateLog log, IEventStream events, TimeProvider clock,
+        ICertificateProbe probe, CaddyCertificateLog log, IEventStream events, IAlertSink alerts, TimeProvider clock,
         IOptions<ProxyOptions> options, ILogger<CertificateMonitor> logger)
     {
         _scopes = scopes;
@@ -44,6 +45,7 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
         _probe = probe;
         _log = log;
         _events = events;
+        _alerts = alerts;
         _clock = clock;
         _options = options.Value;
         _logger = logger;
@@ -127,11 +129,15 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
         var now = _clock.GetUtcNow();
         var reapply = false;
         var events = new List<ProxyEvent>();
+        var alerts = new List<Alert>();
         foreach (var cert in certs)
         {
             var before = cert.Status;
             var checkedNow = probed.TryGetValue(cert.Id, out var reading);
             reapply |= Update(cert, checkedNow, reading, now, events);
+            // Only a fresh reading alerts; a stored status can be days old.
+            if (checkedNow && CertificateAlerts.Evaluate(cert, now) is { } alert)
+                alerts.Add(alert);
             if (cert.Status != before)
                 events.Add(new ProxyEvent("certificate.status",
                     $"{cert.Domain} is {cert.Status.ToString().ToLowerInvariant()}", now, null));
@@ -149,6 +155,7 @@ public sealed class CertificateMonitor : BackgroundService, ICertificateChecks
         }
 
         foreach (var e in events) _events.Publish(e);
+        foreach (var a in alerts) _alerts.Raise(a);
 
         if (reapply && running)
         {
