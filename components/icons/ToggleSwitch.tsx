@@ -18,11 +18,11 @@ const ToggleSwitch: React.FC<ToggleSwitchProps> = ({ label, enabled, onChange, d
           disabled={disabled}
           onChange={() => onChange(!enabled)}
         />
-        <div className={`block w-10 h-5 rounded-full transition-all ${enabled ? 'bg-primary' : 'bg-secondary'}`}></div>
+        <div className={`block w-10 h-5 rounded-full transition-all ${enabled ? 'bg-primary' : 'bg-border'}`}></div>
         <div className={`dot absolute left-0.5 top-0.5 bg-white w-4 h-4 rounded-full transition-transform ${enabled ? 'translate-x-5' : ''}`}></div>
       </div>
       {label && 
-        <div className="ml-3 text-on-surface-muted font-medium">
+        <div className="ml-3 text-sm text-on-surface-muted font-medium">
             {label}
         </div>
       }

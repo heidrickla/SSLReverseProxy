@@ -9,31 +9,73 @@ import ResponseTimeIcon from '../components/icons/ResponseTimeIcon';
 import ActiveConnectionsIcon from '../components/icons/ActiveConnectionsIcon';
 import ChevronUpIcon from '../components/icons/ChevronUpIcon';
 import ChevronDownIcon from '../components/icons/ChevronDownIcon';
+import ServerIcon from '../components/icons/ServerIcon';
+import LockIcon from '../components/icons/LockIcon';
+
+type Tone = 'primary' | 'success' | 'danger' | 'muted';
+
+const toneChip: Record<Tone, string> = {
+  primary: 'bg-primary/15 text-primary',
+  success: 'bg-success/15 text-success',
+  danger: 'bg-danger/15 text-danger',
+  muted: 'bg-on-surface-muted/15 text-on-surface-muted',
+};
 
 const DashboardCard: React.FC<{
   title: string;
   value?: string | number;
   description: string;
-  icon?: React.ReactNode;
+  icon: React.ReactNode;
+  tone?: Tone;
   children?: React.ReactNode;
+  aside?: React.ReactNode;
   onClick?: () => void;
-  className?: string;
-  bubbleColor?: string;
-}> = ({ title, value, description, icon, children, onClick, className, bubbleColor }) => (
-  <div
-    className={`bg-surface rounded-lg p-6 shadow-lg transition-all duration-300 ease-in-out h-full ${className} ${onClick ? 'cursor-pointer group hover:shadow-xl hover:-translate-y-1' : ''}`}
-    onClick={onClick}
-  >
-    <div className="flex items-center justify-between">
-      <h3 className="text-sm font-medium text-on-surface-muted">{title}</h3>
-      <div className="flex items-center space-x-2">
-        {icon}
-        {bubbleColor && <span className={`inline-block w-3 h-3 rounded-full ${bubbleColor}`}></span>}
+}> = ({ title, value, description, icon, tone = 'primary', children, aside, onClick }) => {
+  const Tag = onClick ? 'button' : 'div';
+  return (
+    <Tag
+      className={`card p-5 h-full w-full text-left transition-colors duration-150 ${onClick ? 'hover:border-primary/40 outline-none focus-visible:ring-2 focus-visible:ring-primary/50' : ''}`}
+      onClick={onClick}
+    >
+      <div className="flex items-center gap-3">
+        <span className={`inline-flex w-9 h-9 shrink-0 items-center justify-center rounded-xl ${toneChip[tone]}`}>{icon}</span>
+        <h3 className="text-sm font-medium text-on-surface-muted">{title}</h3>
       </div>
-    </div>
-    {children || <p className="text-3xl font-bold mt-2 text-on-surface">{value}</p>}
-    <p className="text-xs text-on-surface-muted mt-1">{description}</p>
-  </div>
+      <div className="mt-4 flex items-end justify-between gap-3">
+        <div>
+          {children || <p className="text-3xl font-semibold tracking-tight tabular-nums text-on-surface">{value}</p>}
+          <p className="text-xs text-on-surface-muted mt-1">{description}</p>
+        </div>
+        {aside}
+      </div>
+    </Tag>
+  );
+};
+
+const Sparkline: React.FC<{ values: number[] }> = ({ values }) => {
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const points = values
+    .map((v, i) => `${(i / (values.length - 1)) * 80},${22 - ((v - min) / (max - min || 1)) * 20}`)
+    .join(' ');
+  return (
+    <svg width="80" height="24" viewBox="0 0 80 24" aria-hidden="true" className="shrink-0 text-primary">
+      <polyline fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" points={points} />
+    </svg>
+  );
+};
+
+const SectionHeader: React.FC<{ title: string; collapsed: boolean; onToggle: () => void }> = ({ title, collapsed, onToggle }) => (
+  <button
+    onClick={onToggle}
+    aria-expanded={!collapsed}
+    className="flex w-full justify-between items-center mb-4 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+  >
+    <h2 className="text-lg font-semibold tracking-tight text-on-surface">{title}</h2>
+    <span className="p-1.5 rounded-lg text-on-surface-muted hover:bg-surface hover:text-on-surface transition-colors">
+      {collapsed ? <ChevronDownIcon className="w-5 h-5" /> : <ChevronUpIcon className="w-5 h-5" />}
+    </span>
+  </button>
 );
 
 const areaChartData = [
@@ -54,7 +96,15 @@ const statusCodeData = [
     { name: '5xx Server Error', value: 4502 },
 ];
 
-const COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444'];
+const COLORS = ['rgb(var(--color-success-rgb))', 'rgb(var(--color-primary-rgb))', 'rgb(var(--color-warning-rgb))', 'rgb(var(--color-danger-rgb))'];
+
+const tooltipStyle = {
+  backgroundColor: 'rgb(var(--color-surface-raised-rgb))',
+  border: '1px solid rgb(var(--color-border-rgb))',
+  borderRadius: 12,
+  color: 'rgb(var(--color-on-surface-rgb))',
+  fontSize: 12,
+};
 
 interface DashboardProps {
   setView: (view: View) => void;
@@ -89,96 +139,90 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
 
   return (
     <div className="h-full overflow-auto overscroll-contain pr-2 pb-8">
-      <div className="space-y-8">
-        
+      <div className="space-y-10">
         {/* Key Metrics Section */}
-        <div>
-          <div onClick={() => setIsMetricsCollapsed(!isMetricsCollapsed)} className="flex justify-between items-center cursor-pointer mb-6">
-            <h2 className="text-2xl font-bold text-on-surface">Key Metrics</h2>
-            {isMetricsCollapsed ? <ChevronDownIcon className="w-6 h-6 text-on-surface-muted" /> : <ChevronUpIcon className="w-6 h-6 text-on-surface-muted" />}
-          </div>
+        <section>
+          <SectionHeader title="Key metrics" collapsed={isMetricsCollapsed} onToggle={() => setIsMetricsCollapsed(!isMetricsCollapsed)} />
           {!isMetricsCollapsed && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-fade-in">
-              <DashboardCard title="Active Servers" value={serverStats.active || 0} description="Healthy and running" onClick={() => setView('servers')} bubbleColor="bg-success" />
-              <DashboardCard title="Inactive Servers" value={serverStats.inactive || 0} description="Offline or stopped" onClick={() => setView('servers')} bubbleColor="bg-gray-500" />
-              <DashboardCard title="Server Errors" value={serverStats.error || 0} description="Require attention" onClick={() => setView('servers')} className="text-danger" bubbleColor="bg-danger" />
-              <DashboardCard title="Valid Certificates" value={certStats.valid || 0} description="Secure and up-to-date" onClick={() => setView('ssl')} bubbleColor="bg-success" />
-              <DashboardCard title="Active Connections" value="1,283" description="Live connections" icon={<ActiveConnectionsIcon className="w-6 h-6 text-primary" />} />
-              <DashboardCard title="Total Requests" value="1.4M" description="Last 24 hours" icon={<TotalRequestsIcon className="w-6 h-6 text-primary" />} />
-              <DashboardCard title="Bandwidth Usage" description="Last 24 hours" icon={<BandwidthIcon className="w-6 h-6 text-primary" />}>
-                  <div className="mt-2 text-on-surface">
-                      <p className="text-lg font-bold">In: 1.2 TB</p>
-                      <p className="text-lg font-bold">Out: 5.8 TB</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-fade-in">
+              <DashboardCard title="Active servers" value={serverStats.active || 0} description="Healthy and running" onClick={() => setView('servers')} tone="success" icon={<ServerIcon className="w-5 h-5" />} />
+              <DashboardCard title="Inactive servers" value={serverStats.inactive || 0} description="Offline or stopped" onClick={() => setView('servers')} tone="muted" icon={<ServerIcon className="w-5 h-5" />} />
+              <DashboardCard title="Server errors" value={serverStats.error || 0} description="Require attention" onClick={() => setView('servers')} tone="danger" icon={<ServerIcon className="w-5 h-5" />} />
+              <DashboardCard title="Valid certificates" value={certStats.valid || 0} description="Secure and up to date" onClick={() => setView('ssl')} tone="success" icon={<LockIcon className="w-5 h-5" />} />
+              <DashboardCard title="Active connections" value="1,283" description="Live connections" icon={<ActiveConnectionsIcon className="w-5 h-5" />} />
+              <DashboardCard title="Total requests" value="1.4M" description="Last 24 hours" icon={<TotalRequestsIcon className="w-5 h-5" />} aside={<Sparkline values={areaChartData.map(d => d.requests)} />} />
+              <DashboardCard title="Bandwidth" description="Last 24 hours" icon={<BandwidthIcon className="w-5 h-5" />}>
+                  <div className="flex gap-6 text-on-surface tabular-nums">
+                      <div><p className="text-xs text-on-surface-muted">In</p><p className="text-xl font-semibold">1.2 TB</p></div>
+                      <div><p className="text-xs text-on-surface-muted">Out</p><p className="text-xl font-semibold">5.8 TB</p></div>
                   </div>
               </DashboardCard>
-              <DashboardCard title="Time to First Byte (TTFB)" value="85ms" description="Average response start" icon={<TTFBIcon className="w-6 h-6 text-primary" />} />
-              <DashboardCard title="Overall Response Time" description="Percentiles" icon={<ResponseTimeIcon className="w-6 h-6 text-primary" />}>
-                  <div className="grid grid-cols-2 gap-x-4 mt-2 text-sm">
-                      <div><span className="font-semibold">Avg:</span> 120ms</div>
-                      <div><span className="font-semibold">P90:</span> 250ms</div>
-                      <div><span className="font-semibold">Median:</span> 110ms</div>
-                      <div><span className="font-semibold">P95:</span> 310ms</div>
+              <DashboardCard title="Time to first byte" value="85 ms" description="Average response start" icon={<TTFBIcon className="w-5 h-5" />} />
+              <DashboardCard title="Response time" description="Percentiles" icon={<ResponseTimeIcon className="w-5 h-5" />}>
+                  <div className="grid grid-cols-4 gap-3 text-on-surface tabular-nums">
+                      {[['Avg', '120'], ['Median', '110'], ['P90', '250'], ['P95', '310']].map(([label, ms]) => (
+                        <div key={label}><p className="text-xs text-on-surface-muted">{label}</p><p className="text-base font-semibold">{ms}<span className="text-xs font-normal text-on-surface-muted"> ms</span></p></div>
+                      ))}
                   </div>
               </DashboardCard>
             </div>
            )}
-        </div>
+        </section>
 
         {/* Performance Charts Section */}
-        <div>
-          <div onClick={() => setIsChartsCollapsed(!isChartsCollapsed)} className="flex justify-between items-center cursor-pointer mb-6">
-            <h2 className="text-2xl font-bold text-on-surface">Performance Charts</h2>
-            {isChartsCollapsed ? <ChevronDownIcon className="w-6 h-6 text-on-surface-muted" /> : <ChevronUpIcon className="w-6 h-6 text-on-surface-muted" />}
-          </div>
+        <section>
+          <SectionHeader title="Performance" collapsed={isChartsCollapsed} onToggle={() => setIsChartsCollapsed(!isChartsCollapsed)} />
           {!isChartsCollapsed && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fade-in">
-              <div className="bg-surface p-6 rounded-lg shadow-lg h-96 flex flex-col">
-                  <h3 className="text-lg font-semibold text-on-surface mb-4">Requests (24h)</h3>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-fade-in">
+              <div className="card p-6 h-96 flex flex-col">
+                  <h3 className="text-sm font-medium text-on-surface-muted mb-4">Requests, last 24 hours</h3>
                   <div className="grow">
                       <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={areaChartData}>
+                          <AreaChart data={areaChartData} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
                               <defs>
                                   <linearGradient id="colorRequests" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="5%" stopColor="rgb(var(--color-primary-rgb))" stopOpacity={0.8}/>
-                                  <stop offset="95%" stopColor="rgb(var(--color-primary-rgb))" stopOpacity={0}/>
+                                  <stop offset="0%" stopColor="rgb(var(--color-primary-rgb))" stopOpacity={0.35}/>
+                                  <stop offset="100%" stopColor="rgb(var(--color-primary-rgb))" stopOpacity={0}/>
                                   </linearGradient>
                               </defs>
-                              <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--color-border-rgb))" />
-                              <XAxis dataKey="name" stroke="rgb(var(--color-on-surface-muted-rgb))" fontSize={12} />
-                              <YAxis stroke="rgb(var(--color-on-surface-muted-rgb))" fontSize={12} />
-                              <Tooltip contentStyle={{ backgroundColor: 'rgb(var(--color-surface-raised-rgb))', border: '1px solid rgb(var(--color-border-rgb))' }} />
-                              <Area type="monotone" dataKey="requests" stroke="rgb(var(--color-primary-rgb))" fillOpacity={1} fill="url(#colorRequests)" />
+                              <CartesianGrid vertical={false} stroke="rgb(var(--color-border-rgb))" />
+                              <XAxis dataKey="name" stroke="rgb(var(--color-on-surface-muted-rgb))" fontSize={12} tickLine={false} axisLine={false} />
+                              <YAxis stroke="rgb(var(--color-on-surface-muted-rgb))" fontSize={12} tickLine={false} axisLine={false} />
+                              <Tooltip contentStyle={tooltipStyle} cursor={{ stroke: 'rgb(var(--color-border-rgb))' }} />
+                              <Area type="monotone" dataKey="requests" stroke="rgb(var(--color-primary-rgb))" strokeWidth={2} fillOpacity={1} fill="url(#colorRequests)" />
                           </AreaChart>
                       </ResponsiveContainer>
                   </div>
               </div>
-              <div className="bg-surface p-6 rounded-lg shadow-lg h-96 flex flex-col">
-                  <h3 className="text-lg font-semibold text-on-surface mb-4">HTTP Status Codes (24h)</h3>
+              <div className="card p-6 h-96 flex flex-col">
+                  <h3 className="text-sm font-medium text-on-surface-muted mb-4">HTTP status codes, last 24 hours</h3>
                   <div className="grow">
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                             <Pie
                                 data={statusCodeData}
                                 cx="50%"
-                                cy="50%"
+                                cy="45%"
                                 labelLine={false}
+                                innerRadius="58%"
                                 outerRadius="80%"
-                                fill="#8884d8"
+                                paddingAngle={2}
+                                stroke="none"
                                 dataKey="value"
                             >
                                 {statusCodeData.map((entry, index) => (
                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                 ))}
                             </Pie>
-                            <Tooltip contentStyle={{ backgroundColor: 'rgb(var(--color-surface-raised-rgb))', border: '1px solid rgb(var(--color-border-rgb))' }} formatter={(value: number) => value.toLocaleString()} />
-                            <Legend wrapperStyle={{fontSize: "14px"}}/>
+                            <Tooltip contentStyle={tooltipStyle} itemStyle={{ color: 'rgb(var(--color-on-surface-rgb))' }} formatter={(value: number) => value.toLocaleString()} />
+                            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '13px' }} formatter={(value: string) => <span style={{ color: 'rgb(var(--color-on-surface-muted-rgb))' }}>{value}</span>} />
                         </PieChart>
                     </ResponsiveContainer>
                   </div>
               </div>
             </div>
           )}
-        </div>
+        </section>
       </div>
       <style>{`
         @keyframes fade-in {

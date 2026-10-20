@@ -6,20 +6,20 @@ import ConfirmationModal from './ConfirmationModal';
 import { useAuth } from '../contexts/AuthContext';
 
 const DetailItem: React.FC<{ label: string, value: React.ReactNode }> = ({ label, value }) => (
-    <div className="flex justify-between items-center py-2 border-b border-border/50">
+    <div className="flex justify-between items-center py-2.5 border-b border-border">
         <span className="text-sm font-medium text-on-surface-muted">{label}</span>
-        <span className="text-sm text-on-surface text-right font-mono">{value}</span>
+        <span className="text-sm text-on-surface text-right tabular-nums">{value}</span>
     </div>
 );
 
 const StatusBadge: React.FC<{ status: CertificateStatus }> = ({ status }) => {
     const statusClasses = {
-        valid: 'bg-success/20 text-success',
-        expiring: 'bg-warning/20 text-warning',
-        expired: 'bg-danger/20 text-danger',
+        valid: 'bg-success/15 text-success',
+        expiring: 'bg-warning/15 text-warning',
+        expired: 'bg-danger/15 text-danger',
     };
     return (
-        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${statusClasses[status]}`}>
+        <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${statusClasses[status]}`}>
             {status.charAt(0).toUpperCase() + status.slice(1)}
         </span>
     );
@@ -54,36 +54,36 @@ const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certifica
   return (
     <>
         <div
-            className="fixed inset-0 bg-black/60 z-30 animate-fade-in-fast"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 animate-fade-in-fast"
             onClick={onClose}
             aria-hidden="true"
         ></div>
 
-        <aside className="fixed top-0 right-0 bottom-0 w-full max-w-lg bg-surface shadow-xl flex flex-col z-40 animate-slide-in-right">
+        <aside className="fixed top-0 right-0 bottom-0 w-full max-w-lg bg-surface border-l border-border shadow-2xl shadow-black/40 flex flex-col z-40 animate-slide-in-right">
             <div className="p-6 flex flex-col grow overflow-y-auto">
                 <div className="flex justify-between items-center mb-6 shrink-0">
-                    <h3 className="text-xl font-semibold text-on-surface truncate" title={certificate.domain}>{certificate.domain}</h3>
-                    <button onClick={onClose} className="text-on-surface-muted hover:text-on-surface">
-                        <XIcon className="w-6 h-6" />
+                    <h3 className="text-lg font-semibold tracking-tight text-on-surface truncate" title={certificate.domain}>{certificate.domain}</h3>
+                    <button onClick={onClose} aria-label="Close" className="p-1.5 -mr-1.5 rounded-lg text-on-surface-muted hover:bg-surface-raised hover:text-on-surface transition-colors">
+                        <XIcon className="w-5 h-5" />
                     </button>
                 </div>
                 
-                <h4 className="text-lg font-semibold text-on-surface mb-4">Certificate Details</h4>
-                <div className="space-y-2 mb-6">
-                    <DetailItem label="Common Name" value={certificate.domain} />
+                <h4 className="text-sm font-semibold text-on-surface mb-2">Details</h4>
+                <div className="mb-6">
+                    <DetailItem label="Common name" value={certificate.domain} />
                     <DetailItem label="Issuer" value={certificate.issuer} />
                     <DetailItem label="Status" value={<StatusBadge status={certificate.status} />} />
-                    <DetailItem label="Issue Date" value={new Date(certificate.issuedAt).toLocaleDateString()} />
-                    <DetailItem label="Expiry Date" value={new Date(certificate.expiresAt).toLocaleDateString()} />
-                    <DetailItem label="Days Remaining" value={getDaysRemaining()} />
-                    <DetailItem label="Serial Number" value={certificate.serialNumber} />
+                    <DetailItem label="Issued" value={new Date(certificate.issuedAt).toLocaleDateString()} />
+                    <DetailItem label="Expires" value={new Date(certificate.expiresAt).toLocaleDateString()} />
+                    <DetailItem label="Days remaining" value={getDaysRemaining()} />
+                    <DetailItem label="Serial number" value={<span className="font-mono text-xs">{certificate.serialNumber}</span>} />
                     <DetailItem label="Algorithm" value={certificate.algorithm} />
                 </div>
 
                 {(canCreate || canDelete) && (
                     <div className="mt-auto pt-6 border-t border-border flex space-x-2 shrink-0">
-                        {canCreate && <Button variant="secondary" className="w-full">Renew Certificate</Button>}
-                        {canDelete && <Button variant="danger" className="w-full" onClick={() => setIsDeleteConfirmOpen(true)}>Delete Certificate</Button>}
+                        {canCreate && <Button variant="secondary" className="w-full">Renew</Button>}
+                        {canDelete && <Button variant="danger" className="w-full" onClick={() => setIsDeleteConfirmOpen(true)}>Delete</Button>}
                     </div>
                 )}
             </div>
@@ -100,7 +100,7 @@ const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certifica
             isOpen={isDeleteConfirmOpen}
             onClose={() => setIsDeleteConfirmOpen(false)}
             onConfirm={handleConfirmDelete}
-            title="Confirm Deletion"
+            title="Delete certificate"
             message={`Are you sure you want to delete the certificate for "${certificate.domain}"? This action cannot be undone.`}
         />
     </>

@@ -12,14 +12,14 @@ const lightThemes: Theme[] = [
         name: 'Default Light',
         type: 'light',
         colors: {
-            '--color-primary': '#3b82f6', // blue-500
+            '--color-primary': '#0284c7', // sky-600
             '--color-secondary': '#64748b', // slate-500
-            '--color-background': '#f1f5f9', // slate-100
-            '--color-surface': '#ffffff', // white
-            '--color-surface-raised': '#f8fafc', // slate-50
+            '--color-background': '#f5f7fa',
+            '--color-surface': '#ffffff',
+            '--color-surface-raised': '#eef2f6',
             '--color-border': '#e2e8f0', // slate-200
             '--color-on-surface': '#0f172a', // slate-900
-            '--color-on-surface-muted': '#475569', // slate-600
+            '--color-on-surface-muted': '#5b6778',
             ...baseColors,
         },
     },
@@ -149,12 +149,12 @@ const darkThemes: Theme[] = [
         colors: {
             '--color-primary': '#0ea5e9', // sky-500
             '--color-secondary': '#64748b', // slate-500
-            '--color-background': '#0f172a', // slate-900
-            '--color-surface': '#1e293b', // slate-800
-            '--color-surface-raised': '#334155', // slate-700
-            '--color-border': '#475569', // slate-600
-            '--color-on-surface': '#f1f5f9', // slate-100
-            '--color-on-surface-muted': '#94a3b8', // slate-400
+            '--color-background': '#0d1117',
+            '--color-surface': '#151b25',
+            '--color-surface-raised': '#1c2431',
+            '--color-border': '#263041',
+            '--color-on-surface': '#e6edf3',
+            '--color-on-surface-muted': '#8b98a9',
             ...baseColors,
         },
     },

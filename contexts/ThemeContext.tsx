@@ -15,6 +15,8 @@ const isValidColorEntry = (key: string, value: unknown): value is string =>
 
 const applyThemeColors = (theme: Theme) => {
   const root = document.documentElement;
+  // Native controls (select popups, scrollbars, date pickers) follow the theme.
+  root.style.colorScheme = theme.type;
   Object.entries(theme.colors).forEach(([key, value]) => {
     if (!isValidColorEntry(key, value)) return;
     root.style.setProperty(key, value);

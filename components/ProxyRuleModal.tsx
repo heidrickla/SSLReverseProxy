@@ -57,42 +57,42 @@ const ProxyRuleModal: React.FC<ProxyRuleModalProps> = ({
   const isEditMode = initialRule !== null;
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={isEditMode ? 'Edit Proxy Rule' : 'Add Proxy Rule'}>
+    <Modal isOpen={isOpen} onClose={onClose} title={isEditMode ? 'Edit proxy rule' : 'Add proxy rule'}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label htmlFor="rule-domain" className="block text-sm font-medium text-on-surface-muted mb-1">Domain</label>
+          <label htmlFor="rule-domain" className="field-label">Domain</label>
           <input
             type="text"
             id="rule-domain"
             value={domain}
             onChange={(e) => setDomain(e.target.value)}
-            placeholder="e.g., example.com"
-            className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary"
+            placeholder="app.example.com"
+            className="field"
           />
         </div>
         <div>
-          <label htmlFor="rule-proxyTo" className="block text-sm font-medium text-on-surface-muted mb-1">Proxy To Address</label>
+          <label htmlFor="rule-proxyTo" className="field-label">Upstream address</label>
           <input
             type="text"
             id="rule-proxyTo"
             value={proxyTo}
             onChange={(e) => setProxyTo(e.target.value)}
-            placeholder="e.g., http://localhost:3000"
-            className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary"
+            placeholder="http://192.0.2.10:8080"
+            className="field"
           />
         </div>
         <div className="pt-2">
-            <ToggleSwitch enabled={ssl} onChange={setSsl} label="Enable SSL" />
+            <ToggleSwitch enabled={ssl} onChange={setSsl} label="Serve over HTTPS" />
         </div>
-        <div className="flex justify-between items-center pt-4 border-t border-border">
+        <div className="flex justify-between items-center pt-4 mt-2 border-t border-border">
           <div>
             {onDelete && (
               <Button type="button" variant="danger" onClick={onDelete}>Delete</Button>
             )}
           </div>
-          <div className="flex space-x-2">
+          <div className="flex gap-2">
             <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button type="submit">{isEditMode ? 'Save Changes' : 'Add Rule'}</Button>
+            <Button type="submit">{isEditMode ? 'Save changes' : 'Add rule'}</Button>
           </div>
         </div>
       </form>

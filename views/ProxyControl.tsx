@@ -4,11 +4,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { api, ApiError, ProxyStatus, Metrics, ProxyValidation } from '../services/apiClient';
 
 const stateColor: Record<string, string> = {
-    Running: 'bg-success/20 text-success',
-    Stopped: 'bg-secondary/20 text-on-surface-muted',
-    Faulted: 'bg-danger/20 text-danger',
-    Unavailable: 'bg-warning/20 text-warning',
-    Unknown: 'bg-secondary/20 text-on-surface-muted',
+    Running: 'bg-success/15 text-success',
+    Stopped: 'bg-on-surface-muted/15 text-on-surface-muted',
+    Faulted: 'bg-danger/15 text-danger',
+    Unavailable: 'bg-warning/15 text-warning',
+    Unknown: 'bg-on-surface-muted/15 text-on-surface-muted',
 };
 
 const ProxyControl: React.FC = () => {
@@ -52,20 +52,20 @@ const ProxyControl: React.FC = () => {
     return (
         <div className="space-y-6 h-full overflow-y-auto pr-2 pb-8">
             <div className="flex justify-between items-center">
-                <h2 className="text-xl font-semibold text-on-surface">Proxy Control</h2>
+                <h2 className="page-title">Proxy control</h2>
                 <Button variant="secondary" onClick={refresh} disabled={busy !== null}>Refresh</Button>
             </div>
 
             {error && (
-                <div className="bg-danger/10 border-l-4 border-danger p-3 rounded-r-lg text-sm text-on-surface">{error}</div>
+                <div className="rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-on-surface">{error}</div>
             )}
 
             {/* Status */}
-            <div className="bg-surface p-6 rounded-lg shadow-lg">
+            <div className="card p-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-on-surface">Status</h3>
+                    <h3 className="text-base font-semibold text-on-surface">Status</h3>
                     {status && (
-                        <span className={`px-3 py-1 text-xs font-semibold rounded-full ${stateColor[status.state] ?? stateColor.Unknown}`}>
+                        <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${stateColor[status.state] ?? stateColor.Unknown}`}>
                             {status.state}
                         </span>
                     )}
@@ -74,7 +74,7 @@ const ProxyControl: React.FC = () => {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
                         <Stat label="Engine" value={status.engine} />
                         <Stat label="Process ID" value={status.processId ?? '—'} />
-                        <Stat label="Active Rules" value={status.activeRuleCount} />
+                        <Stat label="Active rules" value={status.activeRuleCount} />
                         <Stat label="Started" value={status.startedAt ? new Date(status.startedAt).toLocaleTimeString() : '—'} />
                         {status.message && <div className="col-span-full text-on-surface-muted">{status.message}</div>}
                     </div>
@@ -93,7 +93,7 @@ const ProxyControl: React.FC = () => {
             </div>
 
             {validation && (
-                <div className={`p-4 rounded-lg text-sm ${validation.valid ? 'bg-success/10 text-success' : 'bg-danger/10 text-on-surface'}`}>
+                <div className={`p-4 rounded-xl border text-sm ${validation.valid ? 'border-success/30 bg-success/10 text-success' : 'border-danger/30 bg-danger/10 text-on-surface'}`}>
                     <p className="font-semibold">{validation.valid ? 'Configuration is valid.' : 'Configuration has issues:'}</p>
                     {validation.issues.length > 0 && (
                         <ul className="list-disc ml-5 mt-1">{validation.issues.map((i, idx) => <li key={idx}>{i}</li>)}</ul>
@@ -105,12 +105,12 @@ const ProxyControl: React.FC = () => {
             )}
 
             {/* Metrics */}
-            <div className="bg-surface p-6 rounded-lg shadow-lg">
-                <h3 className="text-lg font-semibold text-on-surface mb-4">Runtime Metrics</h3>
+            <div className="card p-6">
+                <h3 className="text-base font-semibold text-on-surface mb-4">Runtime metrics</h3>
                 {metrics?.available ? (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
-                        <Stat label="Total Requests" value={metrics.totalRequests} />
-                        <Stat label="In Flight" value={metrics.requestsInFlight} />
+                        <Stat label="Total requests" value={metrics.totalRequests} />
+                        <Stat label="In flight" value={metrics.requestsInFlight} />
                         <Stat label="Collected" value={new Date(metrics.collectedAt).toLocaleTimeString()} />
                     </div>
                 ) : (
@@ -123,8 +123,8 @@ const ProxyControl: React.FC = () => {
 
 const Stat: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
     <div>
-        <p className="text-xs text-on-surface-muted uppercase tracking-wider">{label}</p>
-        <p className="text-on-surface font-semibold">{value}</p>
+        <p className="text-xs text-on-surface-muted">{label}</p>
+        <p className="mt-0.5 text-on-surface font-medium tabular-nums">{value}</p>
     </div>
 );
 

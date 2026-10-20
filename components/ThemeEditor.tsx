@@ -50,36 +50,35 @@ const ThemeEditor: React.FC<ThemeEditorProps> = ({ onClose }) => {
   };
 
   return (
-    <Modal isOpen={true} onClose={onClose} title="Create Custom Theme">
+    <Modal isOpen={true} onClose={onClose} title="Create theme">
         <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label htmlFor="custom-theme-name" className="block text-sm font-medium text-on-surface-muted mb-1">
-                        Theme Name
+                    <label htmlFor="custom-theme-name" className="field-label">
+                        Name
                     </label>
                     <input
                         type="text"
                         id="custom-theme-name"
                         value={newThemeName}
                         onChange={(e) => setNewThemeName(e.target.value)}
-                        placeholder="e.g., My Awesome Theme"
-                        className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary"
+                        placeholder="Night shift"
+                        className="field"
                     />
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-on-surface-muted mb-1">Theme Type</label>
-                    <div className="flex space-x-2">
+                    <label className="field-label">Type</label>
+                    <div className="flex gap-2">
                         <Button variant={newThemeType === 'light' ? 'primary' : 'secondary'} onClick={() => handleTypeChange('light')}>Light</Button>
                         <Button variant={newThemeType === 'dark' ? 'primary' : 'secondary'} onClick={() => handleTypeChange('dark')}>Dark</Button>
                     </div>
                 </div>
             </div>
 
-            {/* Fix: Use Object.keys with type assertion for safer iteration and to resolve typing error on input value. */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-border pt-6 max-h-64 overflow-y-auto pr-2">
                 {(Object.keys(newThemeColors) as Array<keyof ThemeColors>).map((key) => (
                 <div key={key} className="flex items-center justify-between">
-                    <label htmlFor={key} className="text-sm font-medium text-on-surface-muted">
+                    <label htmlFor={key} className="text-sm text-on-surface-muted">
                     {formatColorName(key)}
                     </label>
                     <input
@@ -87,16 +86,16 @@ const ThemeEditor: React.FC<ThemeEditorProps> = ({ onClose }) => {
                     type="color"
                     value={newThemeColors[key]}
                     onChange={(e) => handleColorChange(key, e.target.value)}
-                    className="p-1 h-8 w-14 block bg-surface border border-border cursor-pointer rounded-lg"
+                    className="p-0.5 h-8 w-14 block bg-background border border-border cursor-pointer rounded-lg"
                     />
                 </div>
                 ))}
             </div>
 
-            <div className="flex justify-end pt-4 border-t border-border">
+            <div className="flex justify-end gap-2 pt-4 border-t border-border">
                 <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-                <Button type="button" onClick={handleSaveTheme} className="ml-2">
-                    Save Theme
+                <Button type="button" onClick={handleSaveTheme}>
+                    Save theme
                 </Button>
             </div>
         </div>

@@ -16,8 +16,8 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({ isOpen, onClose, 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title}>
       <div className="space-y-6">
-        <p className="text-on-surface-muted">{message}</p>
-        <div className="flex justify-end space-x-2 pt-4">
+        <p className="text-sm text-on-surface-muted">{message}</p>
+        <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>

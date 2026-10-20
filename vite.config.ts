@@ -39,5 +39,9 @@ export default defineConfig(({ command }) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      // Fonts stay files: an inlined data: font is blocked by font-src 'self'.
+      assetsInlineLimit: (filePath: string) => (filePath.endsWith('.woff2') ? false : undefined),
+    },
   };
 });

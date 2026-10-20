@@ -25,20 +25,20 @@ const Header: React.FC = () => {
 
   return (
     <>
-      <header className="flex justify-end items-center py-4 px-8 bg-surface shadow-md shrink-0">
-        <div className="flex items-center space-x-6">
+      <header className="flex justify-end items-center h-16 px-8 bg-background border-b border-border shrink-0">
+        <div className="flex items-center gap-4">
           <button
             onClick={toggleMode}
-            className="p-2 rounded-full text-on-surface-muted hover:bg-surface-raised hover:text-on-surface transition-colors"
+            className="p-2 rounded-xl text-on-surface-muted hover:bg-surface hover:text-on-surface transition-colors"
             aria-label="Toggle theme"
           >
             {mode === 'light' ? <MoonIcon className="w-5 h-5" /> : <SunIcon className="w-5 h-5" />}
           </button>
 
           <div className="relative">
-            <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="flex items-center space-x-3">
-              <span className="font-semibold text-on-surface hidden sm:inline">{currentUser.name}</span>
-              <div className="w-9 h-9 rounded-full shrink-0 border-2 border-primary">
+            <button onClick={() => setIsMenuOpen(!isMenuOpen)} aria-haspopup="menu" aria-expanded={isMenuOpen} className="flex items-center gap-3 rounded-xl py-1 pl-3 pr-1 hover:bg-surface transition-colors">
+              <span className="text-sm font-medium text-on-surface hidden sm:inline">{currentUser.name}</span>
+              <div className="w-8 h-8 rounded-full shrink-0 ring-2 ring-primary/40">
                 <img
                   src={currentUser.avatar || defaultAvatar}
                   alt="User Avatar"
@@ -48,24 +48,25 @@ const Header: React.FC = () => {
             </button>
             {isMenuOpen && (
               <div
-                className="absolute right-0 mt-2 w-56 bg-surface rounded-md shadow-lg py-1 z-10 animate-fade-in-down"
+                role="menu"
+                className="absolute right-0 mt-2 w-60 card shadow-xl shadow-black/30 p-1.5 z-10 animate-fade-in-down"
                 onMouseLeave={() => setIsMenuOpen(false)}
               >
-                <div className="px-4 py-2 border-b border-border">
-                    <p className="text-sm font-semibold text-on-surface">{currentUser.name}</p>
+                <div className="px-3 py-2 mb-1 border-b border-border">
+                    <p className="text-sm font-medium text-on-surface">{currentUser.name}</p>
                     <p className="text-xs text-on-surface-muted">{currentUser.email}</p>
                 </div>
-                <button onClick={() => { setIsAvatarEditorOpen(true); setIsMenuOpen(false); }} className="w-full text-left flex items-center px-4 py-2 text-sm text-on-surface hover:bg-surface-raised">
+                <button onClick={() => { setIsAvatarEditorOpen(true); setIsMenuOpen(false); }} role="menuitem" className="w-full text-left flex items-center px-3 py-2 rounded-lg text-sm text-on-surface hover:bg-surface-raised">
                     <PencilIcon className="w-4 h-4 mr-3" />
-                    Edit Avatar
+                    Edit avatar
                 </button>
-                <button onClick={switchUser} className="w-full text-left flex items-center px-4 py-2 text-sm text-on-surface hover:bg-surface-raised">
+                <button onClick={switchUser} role="menuitem" className="w-full text-left flex items-center px-3 py-2 rounded-lg text-sm text-on-surface hover:bg-surface-raised">
                   <SwitchUserIcon className="w-4 h-4 mr-3" />
-                  Switch User
+                  Switch user
                 </button>
-                <button onClick={logout} className="w-full text-left flex items-center px-4 py-2 text-sm text-on-surface hover:bg-surface-raised">
+                <button onClick={logout} role="menuitem" className="w-full text-left flex items-center px-3 py-2 rounded-lg text-sm text-on-surface hover:bg-surface-raised">
                   <LogoutIcon className="w-4 h-4 mr-3" />
-                  Logout
+                  Sign out
                 </button>
               </div>
             )}

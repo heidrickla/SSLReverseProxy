@@ -19,15 +19,16 @@ const Settings: React.FC = () => {
   const customThemes = allThemes.filter(t => t.custom);
 
   return (
-    <div className="space-y-8 h-full overflow-y-auto pr-2 pb-8">
-      
+    <div className="space-y-6 h-full overflow-y-auto pr-2 pb-8">
+      <h2 className="page-title">Settings</h2>
+
       {/* Appearance Settings */}
-      <div className="bg-surface p-6 rounded-lg shadow-lg">
-        <h2 className="text-xl font-semibold text-on-surface mb-6">Appearance</h2>
+      <div className="card p-6">
+        <h3 className="text-base font-semibold text-on-surface mb-4">Appearance</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label htmlFor="light-theme-select" className="block text-sm font-medium text-on-surface-muted mb-2">
-              Light Theme
+            <label htmlFor="light-theme-select" className="field-label">
+              Light theme
             </label>
             <select
               id="light-theme-select"
@@ -36,14 +37,14 @@ const Settings: React.FC = () => {
                 const selectedTheme = lightThemes.find(t => t.name === e.target.value);
                 if (selectedTheme) setLightTheme(selectedTheme);
               }}
-              className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary"
+              className="field"
             >
               {lightThemes.map(theme => <option key={theme.name} value={theme.name}>{theme.name}</option>)}
             </select>
           </div>
           <div>
-            <label htmlFor="dark-theme-select" className="block text-sm font-medium text-on-surface-muted mb-2">
-              Dark Theme
+            <label htmlFor="dark-theme-select" className="field-label">
+              Dark theme
             </label>
             <select
               id="dark-theme-select"
@@ -52,7 +53,7 @@ const Settings: React.FC = () => {
                 const selectedTheme = darkThemes.find(t => t.name === e.target.value);
                 if (selectedTheme) setDarkTheme(selectedTheme);
               }}
-              className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary"
+              className="field"
             >
               {darkThemes.map(theme => <option key={theme.name} value={theme.name}>{theme.name}</option>)}
             </select>
@@ -61,8 +62,8 @@ const Settings: React.FC = () => {
       </div>
       
       {/* UI Scaling */}
-      <div className="bg-surface p-6 rounded-lg shadow-lg">
-        <h2 className="text-xl font-semibold text-on-surface mb-6">UI Scaling</h2>
+      <div className="card p-6">
+        <h3 className="text-base font-semibold text-on-surface mb-4">Interface scale</h3>
         <div className="flex flex-wrap items-center gap-4">
           <input
             type="range"
@@ -71,26 +72,27 @@ const Settings: React.FC = () => {
             step="5"
             value={scale}
             onChange={(e) => setScale(Number(e.target.value))}
-            className="w-full md:flex-1 h-2 bg-surface-raised rounded-lg appearance-none cursor-pointer"
+            aria-label="Interface scale"
+            className="w-full md:flex-1 accent-primary cursor-pointer"
           />
-          <span className="text-lg font-semibold text-on-surface w-16 text-center">{scale}%</span>
+          <span className="text-sm font-medium text-on-surface w-12 text-center tabular-nums">{scale}%</span>
           <Button variant="secondary" onClick={() => setScale(100)}>Reset</Button>
         </div>
       </div>
 
       {/* Custom Themes Management */}
-      <div className="bg-surface p-6 rounded-lg shadow-lg">
+      <div className="card p-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-on-surface">Custom Themes</h2>
+          <h3 className="text-base font-semibold text-on-surface">Custom themes</h3>
           <Button onClick={() => setIsEditorOpen(true)} icon={<PaintBrushIcon className="w-4 h-4" />}>
-            Create Theme
+            Create theme
           </Button>
         </div>
         {customThemes.length > 0 ? (
           <div className="space-y-2">
             {customThemes.map(theme => (
-              <div key={theme.name} className="flex justify-between items-center bg-surface-raised p-3 rounded-md">
-                <span className="font-medium text-on-surface">{theme.name} ({theme.type})</span>
+              <div key={theme.name} className="flex justify-between items-center rounded-xl border border-border bg-background px-4 py-3">
+                <span className="text-sm font-medium text-on-surface">{theme.name} <span className="text-on-surface-muted font-normal">{theme.type}</span></span>
                 <button
                   onClick={() => {
                     if (window.confirm(`Are you sure you want to delete the theme "${theme.name}"?`)) {
@@ -106,7 +108,7 @@ const Settings: React.FC = () => {
             ))}
           </div>
         ) : (
-          <p className="text-center text-on-surface-muted py-4">You haven't created any custom themes yet.</p>
+          <p className="text-sm text-on-surface-muted py-2">Themes you create appear here.</p>
         )}
       </div>
 

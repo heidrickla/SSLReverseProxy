@@ -8,6 +8,8 @@ import Button from '../components/Button';
 import Modal from '../components/Modal';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import { isValidHostOrIp } from '../utils/validation';
+import EmptyState from '../components/EmptyState';
+import ServerIcon from '../components/icons/ServerIcon';
 
 const AddServerModal: React.FC<{
     isOpen: boolean;
@@ -36,26 +38,26 @@ const AddServerModal: React.FC<{
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Add New Server">
+        <Modal isOpen={isOpen} onClose={onClose} title="Add server">
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                    <label htmlFor="server-name" className="block text-sm font-medium text-on-surface-muted mb-1">Server Name</label>
-                    <input type="text" id="server-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Main Web Server" className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary" />
+                    <label htmlFor="server-name" className="field-label">Name</label>
+                    <input type="text" id="server-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Main web server" className="field" />
                 </div>
                 <div>
-                    <label htmlFor="server-ip" className="block text-sm font-medium text-on-surface-muted mb-1">IP Address</label>
-                    <input type="text" id="server-ip" value={ip} onChange={(e) => setIp(e.target.value)} placeholder="e.g., 192.168.1.100" className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary" />
+                    <label htmlFor="server-ip" className="field-label">IP address or hostname</label>
+                    <input type="text" id="server-ip" value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.0.2.10" className="field" />
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-on-surface-muted mb-1">Operating System</label>
-                    <select value={os} onChange={(e) => setOs(e.target.value as 'linux' | 'windows')} className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary">
+                    <label className="field-label">Operating system</label>
+                    <select value={os} onChange={(e) => setOs(e.target.value as 'linux' | 'windows')} className="field">
                         <option value="linux">Linux</option>
                         <option value="windows">Windows</option>
                     </select>
                 </div>
-                <div className="flex justify-end pt-4">
+                <div className="flex justify-end gap-2 pt-2">
                     <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-                    <Button type="submit" className="ml-2">Add Server</Button>
+                    <Button type="submit">Add server</Button>
                 </div>
             </form>
         </Modal>
@@ -66,17 +68,19 @@ const AddServerModal: React.FC<{
 const ServerRow: React.FC<{ server: Server; onSelect: (server: Server) => void; isSelected: boolean }> = ({ server, onSelect, isSelected }) => {
     return (
         <tr
-            className={`cursor-pointer transition-colors duration-200 ${isSelected ? 'bg-primary/20' : 'hover:bg-surface-raised'}`}
+            className={`cursor-pointer transition-colors duration-200 ${isSelected ? 'bg-primary/10' : 'hover:bg-surface-raised/50'}`}
             onClick={() => onSelect(server)}
         >
-            <td className="p-4 whitespace-nowrap text-on-surface font-medium">
-                <div className="flex items-center">
-                    {server.os === 'linux' ? <LinuxIcon className="w-5 h-5 mr-3 text-on-surface-muted" /> : <WindowsIcon className="w-5 h-5 mr-3 text-on-surface-muted" />}
+            <td className="text-on-surface font-medium">
+                <div className="flex items-center gap-3">
+                    <span className="inline-flex w-8 h-8 items-center justify-center rounded-lg bg-surface-raised text-on-surface-muted">
+                        {server.os === 'linux' ? <LinuxIcon className="w-4 h-4" /> : <WindowsIcon className="w-4 h-4" />}
+                    </span>
                     {server.name}
                 </div>
             </td>
-            <td className="p-4 whitespace-nowrap text-on-surface-muted">{server.host}</td>
-            <td className="p-4 whitespace-nowrap text-on-surface-muted">{server.ruleCount}</td>
+            <td className="text-on-surface-muted tabular-nums">{server.host}</td>
+            <td><span className="inline-flex min-w-7 justify-center rounded-md bg-surface-raised px-2 py-0.5 text-xs font-medium text-on-surface tabular-nums">{server.ruleCount}</span></td>
         </tr>
     );
 };
@@ -96,21 +100,29 @@ const Servers: React.FC = () => {
 
     return (
         <>
-            <div className="flex flex-col h-full">
-                <div className="flex justify-between items-center mb-6 shrink-0">
-                    <h2 className="text-xl font-semibold text-on-surface">Servers</h2>
-                    {canCreate && <Button onClick={() => setIsAddModalOpen(true)}>Add Server</Button>}
+            <div className="flex flex-col gap-6 h-full">
+                <div className="flex justify-between items-center shrink-0">
+                    <h2 className="page-title">Servers</h2>
+                    {canCreate && <Button onClick={() => setIsAddModalOpen(true)}>Add server</Button>}
                 </div>
-                <div ref={scrollRef} className="bg-surface rounded-lg shadow-lg overflow-auto overscroll-contain grow">
-                    <table className="min-w-full">
-                        <thead className="bg-surface-raised sticky top-0">
+                {servers.length === 0 ? (
+                    <EmptyState
+                        icon={<ServerIcon className="w-6 h-6" />}
+                        title="Add your first server"
+                        description="A server is an upstream host the proxy routes domains to."
+                        action={canCreate && <Button onClick={() => setIsAddModalOpen(true)}>Add server</Button>}
+                    />
+                ) : (
+                <div ref={scrollRef} className="card overflow-auto overscroll-contain min-h-0">
+                    <table className="data-table">
+                        <thead>
                             <tr>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Name</th>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Host</th>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Rules</th>
+                                <th>Name</th>
+                                <th>Host</th>
+                                <th>Rules</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-border">
+                        <tbody>
                             {servers.map((server) => (
                                 <ServerRow 
                                     key={server.id} 
@@ -122,6 +134,7 @@ const Servers: React.FC = () => {
                         </tbody>
                     </table>
                 </div>
+                )}
             </div>
             {selectedServer && (
                 <ServerDetailPane

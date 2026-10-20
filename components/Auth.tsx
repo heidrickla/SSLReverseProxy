@@ -30,17 +30,17 @@ const LoginView: React.FC = () => {
         <div className="min-h-screen bg-background flex flex-col justify-center items-center p-4">
             <div className="w-full max-w-md">
                 <div className="flex justify-center mb-6">
-                    <LogoIcon className="w-12 h-12 text-primary" />
+                    <span className="icon-chip w-14 h-14 rounded-2xl"><LogoIcon className="w-8 h-8" /></span>
                 </div>
-                <div className="bg-surface rounded-xl shadow-2xl p-8">
-                    <h1 className="text-2xl font-bold text-center text-on-surface mb-2">Sign in</h1>
-                    <p className="text-center text-on-surface-muted mb-8">
+                <div className="card shadow-2xl shadow-black/30 p-8">
+                    <h1 className="text-2xl font-semibold tracking-tight text-center text-on-surface mb-2">Sign in</h1>
+                    <p className="text-center text-sm text-on-surface-muted mb-8">
                         Authenticate with your control-plane API key.
                     </p>
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div>
-                            <label htmlFor="api-key" className="block text-sm font-medium text-on-surface-muted mb-1">
-                                API Key
+                            <label htmlFor="api-key" className="field-label">
+                                API key
                             </label>
                             <input
                                 type="password"
@@ -50,7 +50,7 @@ const LoginView: React.FC = () => {
                                 placeholder="srp.xxxxxxxx.…"
                                 autoComplete="off"
                                 spellCheck={false}
-                                className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary"
+                                className="field"
                             />
                         </div>
                         {error && <p className="text-sm text-danger">{error}</p>}

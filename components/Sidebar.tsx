@@ -31,15 +31,16 @@ const NavItem: React.FC<{
   return (
     <button
       onClick={() => setView(view)}
-      className={`flex items-center w-full px-4 py-3 my-1 rounded-lg transition-colors duration-200 ${
+      aria-current={isActive ? 'page' : undefined}
+      className={`flex items-center w-full px-3 py-2.5 my-0.5 rounded-xl text-sm font-medium transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
         isActive
-          ? 'bg-primary text-white shadow-md'
-          : 'text-on-surface-muted hover:bg-surface-raised hover:text-on-surface'
+          ? 'bg-primary/15 text-primary'
+          : 'text-on-surface-muted hover:bg-surface hover:text-on-surface'
       } ${isCollapsed ? 'justify-center' : ''}`}
       title={label}
     >
       {icon}
-      {!isCollapsed && <span className="ml-4 font-semibold">{label}</span>}
+      {!isCollapsed && <span className="ml-3">{label}</span>}
     </button>
   );
 };
@@ -64,38 +65,39 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, se
   return (
     <>
       <aside
-        className={`flex flex-col bg-surface shadow-lg transition-all duration-300 ease-in-out ${
-          isCollapsed ? 'w-20' : 'w-64'
+        className={`flex flex-col bg-background border-r border-border transition-all duration-300 ease-in-out ${
+          isCollapsed ? 'w-20' : 'w-60'
         }`}
       >
         <button
           onClick={() => setIsLogoEditorOpen(true)}
-          className="flex items-center justify-center h-20 border-b border-border shrink-0 px-4 group hover:bg-surface-raised transition-colors w-full"
+          className={`flex items-center h-16 shrink-0 px-5 border-b border-border group hover:bg-surface transition-colors w-full ${isCollapsed ? 'justify-center' : ''}`}
           title="Edit Logo"
         >
           {customLogo ? (
-            <img src={customLogo} alt="Custom Logo" className="w-10 h-10 rounded-md object-contain" />
+            <img src={customLogo} alt="Custom Logo" className="w-9 h-9 rounded-xl object-contain" />
           ) : (
-            <LogoIcon className="w-8 h-8 text-primary shrink-0" />
+            <span className="icon-chip w-9 h-9"><LogoIcon className="w-5 h-5" /></span>
           )}
-          {!isCollapsed && <span className="ml-3 text-xl font-bold text-on-surface truncate">ProxyAdmin</span>}
+          {!isCollapsed && <span className="ml-3 text-base font-semibold tracking-tight text-on-surface truncate">ProxyAdmin</span>}
         </button>
-        <nav className="flex-1 px-3 py-4 overflow-y-auto">
-          <NavItem view="dashboard" label="Dashboard" icon={<DashboardIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="proxy" label="Proxy" icon={<ActiveConnectionsIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="servers" label="Servers" icon={<ServerIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="ssl" label="SSL" icon={<LockIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="users" label="Users" icon={<UsersIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="audit-log" label="Audit Log" icon={<AuditLogIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
-          <NavItem view="settings" label="Settings" icon={<SettingsIcon className="w-6 h-6 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+        <nav className="flex-1 px-3 py-3 overflow-y-auto">
+          <NavItem view="dashboard" label="Dashboard" icon={<DashboardIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="proxy" label="Proxy" icon={<ActiveConnectionsIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="servers" label="Servers" icon={<ServerIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="ssl" label="SSL" icon={<LockIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="users" label="Users" icon={<UsersIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="audit-log" label="Audit log" icon={<AuditLogIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          <NavItem view="settings" label="Settings" icon={<SettingsIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
         </nav>
         <div className="p-3 border-t border-border">
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="w-full flex items-center justify-center p-3 rounded-lg text-on-surface-muted hover:bg-surface-raised hover:text-on-surface transition-colors"
-            title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+            className="w-full flex items-center justify-center p-2.5 rounded-xl text-on-surface-muted hover:bg-surface hover:text-on-surface transition-colors"
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            {isCollapsed ? <ChevronDoubleRightIcon className="w-6 h-6" /> : <ChevronDoubleLeftIcon className="w-6 h-6" />}
+            {isCollapsed ? <ChevronDoubleRightIcon className="w-5 h-5" /> : <ChevronDoubleLeftIcon className="w-5 h-5" />}
           </button>
         </div>
       </aside>

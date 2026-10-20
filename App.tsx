@@ -11,6 +11,8 @@ import SSL from './views/SSL';
 import Users from './views/Users';
 import Settings from './views/Settings';
 import LoginView from './components/Auth';
+// Imported here, not from index.css, so Vite bundles the font files.
+import '@fontsource-variable/plus-jakarta-sans';
 import './index.css';
 import { useHorizontalScroll } from './hooks/useHorizontalScroll';
 import AuditLog from './views/AuditLog';

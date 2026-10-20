@@ -10,6 +10,8 @@ import SpinnerIcon from '../components/icons/SpinnerIcon';
 import CloudflareIcon from '../components/icons/CloudflareIcon';
 import { useCloudflareCredentials } from '../hooks/useCloudflareCredentials';
 import { isValidDomain } from '../utils/validation';
+import EmptyState from '../components/EmptyState';
+import LockIcon from '../components/icons/LockIcon';
 
 const AddCertificateModal: React.FC<{
     isOpen: boolean;
@@ -76,15 +78,15 @@ const AddCertificateModal: React.FC<{
     };
     
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Add New Certificate">
+        <Modal isOpen={isOpen} onClose={onClose} title="Add certificate">
              <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                    <label htmlFor="domain-name" className="block text-sm font-medium text-on-surface-muted mb-1">Domain Name</label>
-                    <input type="text" id="domain-name" value={domain} onChange={e => setDomain(e.target.value)} placeholder="e.g., my-awesome-site.com" className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary" />
+                    <label htmlFor="domain-name" className="field-label">Domain</label>
+                    <input type="text" id="domain-name" value={domain} onChange={e => setDomain(e.target.value)} placeholder="app.example.com" className="field" />
                 </div>
                 <div>
-                    <label htmlFor="provider" className="block text-sm font-medium text-on-surface-muted mb-1">Provider</label>
-                    <select id="provider" value={provider} onChange={e => setProvider(e.target.value)} className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary">
+                    <label htmlFor="provider" className="field-label">Provider</label>
+                    <select id="provider" value={provider} onChange={e => setProvider(e.target.value)} className="field">
                         <option value="acme">ACMEv2 (Built-in)</option>
                         <option value="manual">Manual Upload</option>
                     </select>
@@ -92,8 +94,8 @@ const AddCertificateModal: React.FC<{
                  {provider === 'acme' && (
                     <>
                         <div>
-                            <label htmlFor="method" className="block text-sm font-medium text-on-surface-muted mb-1">Method</label>
-                            <select id="method" value={method} onChange={e => setMethod(e.target.value)} className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary">
+                            <label htmlFor="method" className="field-label">Method</label>
+                            <select id="method" value={method} onChange={e => setMethod(e.target.value)} className="field">
                                 <option value="http-01">HTTP-01 Challenge</option>
                                 <option value="dns-01-cloudflare">DNS-01 Challenge (Cloudflare)</option>
                                 {credentials.map(cred => (
@@ -108,20 +110,20 @@ const AddCertificateModal: React.FC<{
                             <div className="space-y-4 pt-2 border-t border-border mt-4 animate-fade-in">
                                  <div className="flex items-center space-x-2">
                                     <CloudflareIcon className="w-5 h-5" />
-                                    <h4 className="font-semibold text-on-surface">Cloudflare Credentials</h4>
+                                    <h4 className="text-sm font-semibold text-on-surface">Cloudflare credentials</h4>
                                 </div>
                                 <div>
-                                    <label htmlFor="cf-token" className="block text-sm font-medium text-on-surface-muted mb-1">API Token</label>
-                                    <input type="password" id="cf-token" value={cloudflareApiToken} onChange={e => setCloudflareApiToken(e.target.value)} placeholder="Enter your Cloudflare API token" autoComplete="off" spellCheck={false} className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary" disabled={isSavedCloudflare} />
+                                    <label htmlFor="cf-token" className="field-label">API token</label>
+                                    <input type="password" id="cf-token" value={cloudflareApiToken} onChange={e => setCloudflareApiToken(e.target.value)} placeholder="Enter your Cloudflare API token" autoComplete="off" spellCheck={false} className="field" disabled={isSavedCloudflare} />
                                 </div>
                                 <div>
-                                    <label htmlFor="cf-zone-id" className="block text-sm font-medium text-on-surface-muted mb-1">Zone ID</label>
-                                    <input type="text" id="cf-zone-id" value={cloudflareZoneId} onChange={e => setCloudflareZoneId(e.target.value)} placeholder="Enter your domain's Zone ID" className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary" disabled={isSavedCloudflare} />
+                                    <label htmlFor="cf-zone-id" className="field-label">Zone ID</label>
+                                    <input type="text" id="cf-zone-id" value={cloudflareZoneId} onChange={e => setCloudflareZoneId(e.target.value)} placeholder="Enter your domain's Zone ID" className="field" disabled={isSavedCloudflare} />
                                 </div>
                                 {isGenericCloudflare && (
                                     <>
                                         <label className="flex items-center space-x-2 cursor-pointer text-sm text-on-surface-muted">
-                                            <input type="checkbox" checked={saveCredentials} onChange={e => setSaveCredentials(e.target.checked)} className="rounded-sm border-border text-primary focus:ring-primary" />
+                                            <input type="checkbox" checked={saveCredentials} onChange={e => setSaveCredentials(e.target.checked)} className="rounded-sm border-border accent-primary" />
                                             <span>Save these credentials in this browser</span>
                                         </label>
                                         {saveCredentials && (
@@ -138,9 +140,9 @@ const AddCertificateModal: React.FC<{
                         )}
                     </>
                 )}
-                <div className="flex justify-end pt-4">
+                <div className="flex justify-end gap-2 pt-2">
                     <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-                    <Button type="submit" className="ml-2">Request Certificate</Button>
+                    <Button type="submit">Request certificate</Button>
                 </div>
             </form>
         </Modal>
@@ -150,19 +152,19 @@ const AddCertificateModal: React.FC<{
 const StatusBadge: React.FC<{ status: CertificateStatus }> = ({ status }) => {
     const statusInfo = {
         valid: {
-            classes: 'bg-success/20 text-success',
+            classes: 'bg-success/15 text-success',
             icon: null,
         },
         expiring: {
-            classes: 'bg-warning/20 text-warning',
+            classes: 'bg-warning/15 text-warning',
             icon: null,
         },
         expired: {
-            classes: 'bg-danger/20 text-danger',
+            classes: 'bg-danger/15 text-danger',
             icon: null,
         },
         issuing: {
-            classes: 'bg-sky-500/20 text-sky-400',
+            classes: 'bg-primary/15 text-primary',
             icon: <SpinnerIcon className="w-3 h-3 mr-1.5" />,
         },
     };
@@ -170,7 +172,7 @@ const StatusBadge: React.FC<{ status: CertificateStatus }> = ({ status }) => {
     const currentStatus = statusInfo[status] || statusInfo.expired;
 
     return (
-        <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${currentStatus.classes}`}>
+        <span className={`inline-flex items-center px-2.5 py-0.5 text-xs font-medium rounded-full ${currentStatus.classes}`}>
             {currentStatus.icon}
             {status.charAt(0).toUpperCase() + status.slice(1)}
         </span>
@@ -200,28 +202,28 @@ const SSL: React.FC = () => {
         <>
             <div className="gap-6 h-full flex flex-col">
                 <div className="flex justify-between items-center shrink-0">
-                    <h2 className="text-xl font-semibold text-on-surface">Manage SSL Certificates</h2>
-                    {canCreate && <Button onClick={() => setIsModalOpen(true)}>Add Certificate</Button>}
+                    <h2 className="page-title">SSL certificates</h2>
+                    {canCreate && <Button onClick={() => setIsModalOpen(true)}>Add certificate</Button>}
                 </div>
 
                 {expiringCerts.length > 0 && (
-                  <div className="bg-warning/10 border-l-4 border-warning p-4 rounded-r-lg animate-fade-in">
+                  <div className="rounded-2xl border border-warning/30 bg-warning/10 p-4 animate-fade-in">
                     <div className="flex items-center">
-                      <BellIcon className="w-6 h-6 mr-3 text-warning" />
-                      <h3 className="text-lg font-semibold text-on-surface">Expiring Soon</h3>
+                      <BellIcon className="w-5 h-5 mr-2.5 text-warning" />
+                      <h3 className="text-sm font-semibold text-on-surface">Expiring soon</h3>
                     </div>
                     <div className="mt-4 space-y-2">
                       {expiringCerts.map(cert => {
                         const daysLeft = Math.ceil((new Date(cert.expiresAt).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
                         return (
-                          <div key={cert.id} className="flex justify-between items-center bg-surface p-3 rounded-md shadow-sm">
+                          <div key={cert.id} className="flex justify-between items-center bg-surface p-3 rounded-xl border border-border">
                             <div>
                               <p className="font-medium text-on-surface">{cert.domain}</p>
                               <p className="text-sm text-on-surface-muted">
                                 Expires in {daysLeft} day{daysLeft !== 1 ? 's' : ''}
                               </p>
                             </div>
-                            <Button size="sm" variant="secondary">Renew Now</Button>
+                            <Button size="sm" variant="secondary">Renew now</Button>
                           </div>
                         );
                       })}
@@ -229,29 +231,37 @@ const SSL: React.FC = () => {
                   </div>
                 )}
 
-                <div ref={scrollRef} className="bg-surface rounded-lg shadow-lg overflow-auto overscroll-contain grow">
-                    <table className="min-w-full">
-                        <thead className="bg-surface-raised sticky top-0">
+                {certificates.length === 0 ? (
+                    <EmptyState
+                        icon={<LockIcon className="w-6 h-6" />}
+                        title="Add your first certificate"
+                        description="Certificates are issued over ACME and renewed before they expire."
+                        action={canCreate && <Button onClick={() => setIsModalOpen(true)}>Add certificate</Button>}
+                    />
+                ) : (
+                <div ref={scrollRef} className="card overflow-auto overscroll-contain min-h-0">
+                    <table className="data-table">
+                        <thead>
                             <tr>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Domain</th>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Issuer</th>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Status</th>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Expires At</th>
-                                <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Actions</th>
+                                <th>Domain</th>
+                                <th>Issuer</th>
+                                <th>Status</th>
+                                <th>Expires</th>
+                                <th><span className="sr-only">Actions</span></th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-border">
+                        <tbody>
                             {certificates.map((cert) => (
                                 <tr 
                                     key={cert.id}
                                     onClick={() => setSelectedId(cert.id)}
-                                    className={`cursor-pointer transition-colors duration-200 ${selectedId === cert.id ? 'bg-primary/20' : 'hover:bg-surface-raised'}`}
+                                    className={`cursor-pointer transition-colors duration-200 ${selectedId === cert.id ? 'bg-primary/10' : 'hover:bg-surface-raised/50'}`}
                                 >
-                                    <td className="p-4 whitespace-nowrap text-on-surface font-medium">{cert.domain}</td>
-                                    <td className="p-4 whitespace-nowrap text-on-surface-muted">{cert.issuer}</td>
-                                    <td className="p-4 whitespace-nowrap"><StatusBadge status={cert.status} /></td>
-                                    <td className="p-4 whitespace-nowrap text-on-surface-muted">{cert.status === 'issuing' ? 'N/A' : new Date(cert.expiresAt).toLocaleDateString()}</td>
-                                    <td className="p-4 whitespace-nowrap">
+                                    <td className="text-on-surface font-medium">{cert.domain}</td>
+                                    <td className="text-on-surface-muted">{cert.issuer}</td>
+                                    <td><StatusBadge status={cert.status} /></td>
+                                    <td className="text-on-surface-muted tabular-nums">{cert.status === 'issuing' ? '—' : new Date(cert.expiresAt).toLocaleDateString()}</td>
+                                    <td className="text-right">
                                         <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); /* Placeholder */ }} disabled={cert.status === 'issuing'}>Renew</Button>
                                     </td>
                                 </tr>
@@ -259,6 +269,7 @@ const SSL: React.FC = () => {
                         </tbody>
                     </table>
                 </div>
+                )}
 
                 <AddCertificateModal
                     isOpen={isModalOpen}

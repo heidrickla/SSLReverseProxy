@@ -48,34 +48,34 @@ const AddUserModal: React.FC<{
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Add New User">
+        <Modal isOpen={isOpen} onClose={onClose} title="Add user">
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="flex flex-col items-center space-y-2">
-                    <img src={avatar} alt="Avatar Preview" className="w-24 h-24 rounded-full object-cover border-4 border-surface-raised" />
-                    <label className="cursor-pointer text-sm text-primary hover:underline">
-                        Change Avatar
+                    <img src={avatar} alt="Avatar Preview" className="w-20 h-20 rounded-full object-cover ring-4 ring-surface-raised" />
+                    <label className="cursor-pointer text-sm font-medium text-primary hover:underline">
+                        Change avatar
                         <input type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
                     </label>
                 </div>
                 <div>
-                    <label htmlFor="name" className="block text-sm font-medium text-on-surface-muted mb-1">Full Name</label>
-                    <input type="text" id="name" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary" />
+                    <label htmlFor="name" className="field-label">Full name</label>
+                    <input type="text" id="name" value={name} onChange={(e) => setName(e.target.value)} className="field" />
                 </div>
                 <div>
-                    <label htmlFor="email" className="block text-sm font-medium text-on-surface-muted mb-1">Email Address</label>
-                    <input type="email" id="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary" />
+                    <label htmlFor="email" className="field-label">Email address</label>
+                    <input type="email" id="email" value={email} onChange={(e) => setEmail(e.target.value)} className="field" />
                 </div>
                 <div>
-                    <label htmlFor="role" className="block text-sm font-medium text-on-surface-muted mb-1">Role</label>
-                    <select id="role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="w-full bg-surface-raised border border-border rounded-md p-2 text-on-surface focus:ring-primary focus:border-primary">
+                    <label htmlFor="role" className="field-label">Role</label>
+                    <select id="role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="field">
                         <option>Viewer</option>
                         <option>Editor</option>
                         <option>Admin</option>
                     </select>
                 </div>
-                <div className="flex justify-end pt-4">
+                <div className="flex justify-end gap-2 pt-2">
                     <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-                    <Button type="submit" className="ml-2">Save User</Button>
+                    <Button type="submit">Save user</Button>
                 </div>
             </form>
         </Modal>
@@ -92,33 +92,33 @@ const Users: React.FC = () => {
     return (
         <div className="gap-6 h-full flex flex-col">
             <div className="flex justify-between items-center shrink-0">
-                <h2 className="text-xl font-semibold text-on-surface">User Management</h2>
-                {canManageUsers && <Button onClick={() => setIsModalOpen(true)}>Add User</Button>}
+                <h2 className="page-title">Users</h2>
+                {canManageUsers && <Button onClick={() => setIsModalOpen(true)}>Add user</Button>}
             </div>
-            <div ref={scrollRef} className="bg-surface rounded-lg shadow-lg overflow-auto overscroll-contain grow">
-                <table className="min-w-full">
-                    <thead className="bg-surface-raised sticky top-0">
+            <div ref={scrollRef} className="card overflow-auto overscroll-contain min-h-0">
+                <table className="data-table">
+                    <thead>
                         <tr>
-                            <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Name</th>
-                            <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Email</th>
-                            <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Role</th>
-                            <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Last Login</th>
-                            <th className="p-4 text-left text-xs font-medium text-on-surface-muted uppercase tracking-wider">Actions</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Last login</th>
+                            <th><span className="sr-only">Actions</span></th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-border">
+                    <tbody>
                         {users.map((user) => (
                             <tr key={user.id}>
-                                <td className="p-4 whitespace-nowrap text-on-surface font-medium">
+                                <td className="text-on-surface font-medium">
                                     <div className="flex items-center">
                                         <img src={user.avatar || defaultAvatar} alt={user.name} className="w-8 h-8 rounded-full object-cover mr-3" />
                                         {user.name}
                                     </div>
                                 </td>
-                                <td className="p-4 whitespace-nowrap text-on-surface-muted">{user.email}</td>
-                                <td className="p-4 whitespace-nowrap text-on-surface-muted">{user.role}</td>
-                                <td className="p-4 whitespace-nowrap text-on-surface-muted">{new Date(user.lastLogin).toLocaleString()}</td>
-                                <td className="p-4 whitespace-nowrap">
+                                <td className="text-on-surface-muted">{user.email}</td>
+                                <td><span className="inline-flex rounded-full bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-on-surface">{user.role}</span></td>
+                                <td className="text-on-surface-muted tabular-nums">{new Date(user.lastLogin).toLocaleString()}</td>
+                                <td className="text-right">
                                     {canManageUsers && <Button size="sm" variant="secondary">Edit</Button>}
                                 </td>
                             </tr>

@@ -1,8 +1,7 @@
 @import 'tailwindcss';
 
 @theme {
-  /* Tailwind 3's sans stack; 4.3 defaults to an -apple-system list. */
-  --font-sans: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 
   --color-primary: rgb(var(--color-primary-rgb));
   --color-secondary: rgb(var(--color-secondary-rgb));
@@ -17,23 +16,66 @@
   --color-danger: rgb(var(--color-danger-rgb));
 }
 
-/* Tailwind 3 preflight defaults that Tailwind 4 dropped: gray-200 borders, gray-400 placeholders and a pointer cursor on buttons. */
+/* Tailwind 3 preflight defaults that Tailwind 4 dropped (theme borders, muted placeholders, a pointer cursor on buttons), plus thin themed scrollbars. */
 @layer base {
   *,
   ::after,
   ::before,
   ::backdrop,
   ::file-selector-button {
-    border-color: var(--color-gray-200, currentcolor);
+    border-color: var(--color-border, currentcolor);
   }
 
   input::placeholder,
   textarea::placeholder {
-    color: var(--color-gray-400);
+    color: var(--color-on-surface-muted);
+    opacity: 0.7;
   }
 
   button:not(:disabled),
   [role='button']:not(:disabled) {
     cursor: pointer;
   }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+  }
+}
+
+/* Shared building blocks; every colour comes from the theme variables. */
+@utility card {
+  @apply rounded-2xl border border-border bg-surface;
+}
+
+@utility field {
+  @apply w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-on-surface transition-colors outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 disabled:opacity-60;
+}
+
+@utility field-label {
+  @apply mb-1.5 block text-sm font-medium text-on-surface-muted;
+}
+
+@utility icon-chip {
+  @apply inline-flex shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary;
+}
+
+@utility data-table {
+  @apply min-w-full text-sm;
+
+  & thead th {
+    @apply sticky top-0 border-b border-border bg-surface px-5 py-3 text-left text-xs font-medium text-on-surface-muted;
+  }
+
+  & tbody td {
+    @apply px-5 py-3.5 whitespace-nowrap;
+  }
+
+  & tbody tr + tr {
+    @apply border-t border-border;
+  }
+}
+
+@utility page-title {
+  @apply text-2xl font-semibold tracking-tight text-on-surface;
 }
