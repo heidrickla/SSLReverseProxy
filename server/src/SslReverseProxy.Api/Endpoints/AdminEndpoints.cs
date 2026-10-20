@@ -17,7 +17,6 @@ public static class AdminEndpoints
         MapMeta(app);
         MapUsers(app);
         MapApiKeys(app);
-        MapCertificates(app);
         MapAudit(app);
         return app;
     }
@@ -185,75 +184,6 @@ public static class AdminEndpoints
             await audit.AuditAsync(me, ctx, "Rotate API Key", "API Key", old.Name);
             return Results.Ok(new IssuedApiKeyDto(issued.Record.Id, issued.Record.Name, issued.PlaintextToken, issued.Record.ExpiresAt));
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ApiKeyManage));
-
-        return;
-    }
-
-    private static void MapCertificates(IEndpointRouteBuilder app)
-    {
-        var certs = app.MapGroup("/api/certificates").WithTags("Certificates");
-
-        certs.MapGet("/", async (AppDbContext db) =>
-            Results.Ok((await db.Certificates.AsNoTracking().ToListAsync()).Select(c => c.ToDto())))
-            .RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertRead));
-
-        // Certificates are issued/renewed by the proxy engine (Caddy ACME). This
-        // registers a domain to be managed; issuance happens out-of-band.
-        certs.MapPost("/", async (
-            CertificateDto req, AppDbContext db, ProxyTargetValidator validator,
-            IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
-        {
-            var d = validator.ValidateDomain(req.Domain);
-            if (!d.Ok) return Results.ValidationProblem(new Dictionary<string, string[]> { ["domain"] = [d.Reason!] });
-
-            var cert = new Certificate
-            {
-                Domain = req.Domain.Trim(),
-                Issuer = "ACME (managed by proxy)",
-                Status = CertificateStatus.Issuing,
-                Managed = true,
-            };
-            db.Certificates.Add(cert);
-            await db.SaveChangesAsync(ctx.RequestAborted);
-            await audit.AuditAsync(me, ctx, "Register Certificate", "Certificate", cert.Domain);
-            return Results.Created($"/api/certificates/{cert.Id}", cert.ToDto());
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertWrite));
-
-        // Real status derived from the cert's dates (not just the stored flag).
-        certs.MapGet("/{id:guid}/status", async (Guid id, AppDbContext db, TimeProvider clock, CancellationToken ct) =>
-        {
-            var cert = await db.Certificates.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
-            if (cert is null) return Results.NotFound();
-            var health = CertificateStatusEvaluator.Evaluate(cert, clock.GetUtcNow());
-            return Results.Ok(new CertStatusDto(cert.Id, cert.Domain, health.Status.ToString(), health.DaysRemaining, cert.ExpiresAt));
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertRead));
-
-        // Force renewal: mark issuing and reload the proxy so Caddy (re)obtains it.
-        certs.MapPost("/{id:guid}/renew", async (
-            Guid id, AppDbContext db, IProxyController proxy, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
-        {
-            var cert = await db.Certificates.FirstOrDefaultAsync(c => c.Id == id, ctx.RequestAborted);
-            if (cert is null) return Results.NotFound();
-            cert.Status = CertificateStatus.Issuing;
-            await db.SaveChangesAsync(ctx.RequestAborted);
-
-            var rules = await db.Rules.AsNoTracking().ToListAsync(ctx.RequestAborted);
-            var status = await proxy.ApplyConfigurationAsync(rules, ctx.RequestAborted);
-            await audit.AuditAsync(me, ctx, "Renew Certificate", "Certificate", cert.Domain,
-                success: status.State is ProxyState.Running, details: status.Message);
-            return Results.Accepted($"/api/certificates/{cert.Id}/status", cert.ToDto());
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertWrite));
-
-        certs.MapDelete("/{id:guid}", async (
-            Guid id, AppDbContext db, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
-        {
-            var cert = await db.Certificates.FindAsync([id], ctx.RequestAborted);
-            if (cert is null) return Results.NotFound();
-            db.Certificates.Remove(cert);
-            await db.SaveChangesAsync(ctx.RequestAborted);
-            await audit.AuditAsync(me, ctx, "Delete Certificate", "Certificate", cert.Domain);
-            return Results.NoContent();
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertWrite));
 
         return;
     }

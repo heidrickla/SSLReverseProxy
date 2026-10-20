@@ -19,6 +19,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="SslReverseProxy.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SslReverseProxy.Core\SslReverseProxy.Core.csproj" />
     <ProjectReference Include="..\SslReverseProxy.Infrastructure\SslReverseProxy.Infrastructure.csproj" />
   </ItemGroup>

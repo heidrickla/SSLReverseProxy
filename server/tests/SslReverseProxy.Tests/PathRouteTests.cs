@@ -142,7 +142,8 @@ public class PathRouteStructuralValidationTests
 
     private static CaddyProxyController Controller() => new(
         Options.Create(new ProxyOptions { CaddyPath = Path.Combine(Path.GetTempPath(), $"no-caddy-{Guid.NewGuid():N}.exe") }),
-        new NoHttp(), NullLogger<CaddyProxyController>.Instance, TimeProvider.System, new TrafficRecorder(), SecretRedactor.None);
+        new NoHttp(), NullLogger<CaddyProxyController>.Instance, TimeProvider.System, new TrafficRecorder(), SecretRedactor.None,
+        new CaddyCertificateLog(SecretRedactor.None, TimeProvider.System));
 
     private static ProxyRule Rule(string domain, string? prefix, bool tls = true) =>
         new() { Domain = domain, UpstreamUrl = "http://10.0.0.2", Enabled = true, EnableTls = tls, PathPrefix = prefix };
@@ -151,7 +152,7 @@ public class PathRouteStructuralValidationTests
     public async Task SameHost_DifferentPaths_IsValid()
     {
         using var c = Controller();
-        var result = await c.ValidateConfigurationAsync([Rule("a.example.com", null), Rule("a.example.com", "/api"), Rule("A.example.com", "/web")]);
+        var result = await c.ValidateConfigurationAsync(new ProxyPlan([Rule("a.example.com", null), Rule("a.example.com", "/api"), Rule("A.example.com", "/web")]));
         Assert.True(result.Valid, string.Join("; ", result.Issues));
     }
 
@@ -159,7 +160,7 @@ public class PathRouteStructuralValidationTests
     public async Task SameHostAndPath_IsDuplicate_IgnoringCase()
     {
         using var c = Controller();
-        var result = await c.ValidateConfigurationAsync([Rule("a.example.com", "/api"), Rule("A.example.com", "/API")]);
+        var result = await c.ValidateConfigurationAsync(new ProxyPlan([Rule("a.example.com", "/api"), Rule("A.example.com", "/API")]));
         Assert.False(result.Valid);
         Assert.Contains(result.Issues, i => i.Contains("Duplicate route"));
     }
@@ -168,7 +169,7 @@ public class PathRouteStructuralValidationTests
     public async Task SameHost_MixedTls_IsRejected()
     {
         using var c = Controller();
-        var result = await c.ValidateConfigurationAsync([Rule("a.example.com", null, tls: true), Rule("a.example.com", "/api", tls: false)]);
+        var result = await c.ValidateConfigurationAsync(new ProxyPlan([Rule("a.example.com", null, tls: true), Rule("a.example.com", "/api", tls: false)]));
         Assert.False(result.Valid);
         Assert.Contains(result.Issues, i => i.Contains("disagree on TLS"));
     }

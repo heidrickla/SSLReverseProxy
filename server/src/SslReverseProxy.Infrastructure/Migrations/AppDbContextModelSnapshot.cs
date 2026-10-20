@@ -125,6 +125,12 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.Property<string>("Algorithm")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Challenge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("CheckedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Domain")
                         .IsRequired()
                         .HasMaxLength(253)
@@ -140,18 +146,34 @@ namespace SslReverseProxy.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("Managed")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("SerialNumber")
+                    b.Property<string>("RenewFromSerial")
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("RenewRequestedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SerialNumber")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Domain");
+                    b.HasIndex("Domain")
+                        .IsUnique();
 
                     b.ToTable("Certificates");
                 });

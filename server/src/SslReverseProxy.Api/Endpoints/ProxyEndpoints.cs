@@ -45,10 +45,10 @@ public static class ProxyEndpoints
         // Preview the generated proxy config without applying it.
         group.MapGet("/config", async (IProxyController proxy, AppDbContext db, CancellationToken ct) =>
         {
-            var rules = await db.Rules.AsNoTracking().ToListAsync(ct);
+            var plan = await db.LoadProxyPlanAsync(ct);
             try
             {
-                return Results.Text(proxy.BuildConfigJson(rules), "application/json");
+                return Results.Text(proxy.BuildConfigJson(plan), "application/json");
             }
             catch (InvalidOperationException ex)
             {
@@ -59,21 +59,21 @@ public static class ProxyEndpoints
         // Dry-run: validate the current rule set without touching the live proxy.
         group.MapPost("/validate", async (IProxyController proxy, AppDbContext db, CancellationToken ct) =>
         {
-            var rules = await db.Rules.AsNoTracking().ToListAsync(ct);
-            var r = await proxy.ValidateConfigurationAsync(rules, ct);
+            var r = await proxy.ValidateConfigurationAsync(await db.LoadProxyPlanAsync(ct), ct);
             return Results.Ok(new ProxyValidationDto(r.Valid, r.Issues, r.EngineValidated));
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
 
         group.MapPost("/start", async (
             IProxyController proxy, AppDbContext db, IAuditLog audit, IEventStream events,
-            ICurrentPrincipal me, HttpContext ctx) =>
+            ICertificateChecks certificates, ICurrentPrincipal me, HttpContext ctx) =>
         {
             var status = await proxy.StartAsync(ctx.RequestAborted);
             if (status.State == ProxyState.Running)
             {
-                var rules = await db.Rules.AsNoTracking().ToListAsync(ctx.RequestAborted);
-                status = await proxy.ApplyConfigurationAsync(rules, ctx.RequestAborted);
-                await CaptureSnapshotAsync(db, proxy, rules, me.Name, "start", ctx.RequestAborted);
+                var plan = await db.LoadProxyPlanAsync(ctx.RequestAborted);
+                status = await proxy.ApplyConfigurationAsync(plan, ctx.RequestAborted);
+                await CaptureSnapshotAsync(db, proxy, plan, me.Name, "start", ctx.RequestAborted);
+                certificates.RequestCheck();
             }
             await audit.AuditAsync(me, ctx, "Proxy Start", "Proxy", status.Engine,
                 success: status.State is ProxyState.Running, details: status.Message);
@@ -93,12 +93,15 @@ public static class ProxyEndpoints
 
         group.MapPost("/reload", async (
             IProxyController proxy, AppDbContext db, IAuditLog audit, IEventStream events,
-            ICurrentPrincipal me, HttpContext ctx) =>
+            ICertificateChecks certificates, ICurrentPrincipal me, HttpContext ctx) =>
         {
-            var rules = await db.Rules.AsNoTracking().ToListAsync(ctx.RequestAborted);
-            var status = await proxy.ApplyConfigurationAsync(rules, ctx.RequestAborted);
+            var plan = await db.LoadProxyPlanAsync(ctx.RequestAborted);
+            var status = await proxy.ApplyConfigurationAsync(plan, ctx.RequestAborted);
             if (status.State == ProxyState.Running)
-                await CaptureSnapshotAsync(db, proxy, rules, me.Name, "reload", ctx.RequestAborted);
+            {
+                await CaptureSnapshotAsync(db, proxy, plan, me.Name, "reload", ctx.RequestAborted);
+                certificates.RequestCheck();
+            }
             await audit.AuditAsync(me, ctx, "Proxy Reload", "Proxy", status.Engine,
                 success: status.State is ProxyState.Running, details: status.Message);
             events.Publish(new ProxyEvent("proxy.reload", $"rules={status.ActiveRuleCount}", DateTimeOffset.UtcNow, me.Name));
@@ -130,14 +133,15 @@ public static class ProxyEndpoints
     }
 
     private static async Task CaptureSnapshotAsync(
-        AppDbContext db, IProxyController proxy, IReadOnlyCollection<ProxyRule> rules,
+        AppDbContext db, IProxyController proxy, ProxyPlan plan,
         string actor, string note, CancellationToken ct)
     {
         db.ConfigSnapshots.Add(new ConfigSnapshot
         {
             Actor = actor,
-            ConfigJson = proxy.BuildConfigJson(rules),
-            RuleCount = rules.Count(r => r.Enabled),
+            // A rollback must not restart a forced renewal the monitor has since ended.
+            ConfigJson = proxy.BuildConfigJson(plan.WithoutPendingRenewals()),
+            RuleCount = plan.Rules.Count(r => r.Enabled),
             Note = note,
         });
         await db.SaveChangesAsync(ct);

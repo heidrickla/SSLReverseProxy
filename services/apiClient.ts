@@ -135,7 +135,16 @@ export interface Traffic {
 export interface Snapshot { id: number; createdAt: string; actor: string; ruleCount: number; note: string | null; }
 export interface UpstreamHealth { reachable: boolean; statusCode: number | null; latencyMs: number | null; error: string | null; }
 export interface CertStatus { id: string; domain: string; status: string; daysRemaining: number | null; expiresAt: string | null; }
-export interface ApiCertificate { id: string; domain: string; issuer: string; status: string; expiresAt: string | null; managed: boolean; }
+export type ChallengeName = 'Http' | 'DnsCloudflare';
+/** A certificate row. `status` is derived from the served certificate's dates when the list is read. */
+export interface ApiCertificate {
+  id: string; domain: string; issuer: string; status: string; daysRemaining: number | null;
+  issuedAt: string | null; expiresAt: string | null; serialNumber: string | null; algorithm: string | null;
+  source: 'Rule' | 'Manual'; challenge: ChallengeName; lastError: string | null; checkedAt: string | null;
+  renewPending: boolean; managed: boolean;
+}
+/** A validation method and whether the server can use it now. */
+export interface CertificateChallenge { name: ChallengeName; available: boolean; wildcard: boolean; reason: string | null; }
 export interface ApiUser { id: string; name: string; email: string; role: string; isActive: boolean; lastSeenAt: string | null; }
 export interface ApiAuditEntry { id: number; timestamp: string; actor: string; action: string; targetType: string; targetName: string; success: boolean; sourceIp: string | null; }
 
@@ -149,6 +158,14 @@ const ifMatch = (version: number): Record<string, string> => ({ 'If-Match': `"${
  */
 export const isConcurrencyConflict = (e: unknown): boolean =>
   e instanceof ApiError && (e.status === 412 || e.status === 409 || e.status === 428);
+
+/** The first field error of a validation problem, else the problem's own message. */
+export const apiErrorMessage = (e: unknown, fallback = 'Request failed.'): string => {
+  if (!(e instanceof ApiError)) return fallback;
+  const errors = (e.problem as { errors?: Record<string, string[]> } | undefined)?.errors;
+  const first = errors && Object.values(errors).flat()[0];
+  return first || e.message || fallback;
+};
 
 export const api = {
   whoami: () => request<WhoAmI>('GET', '/api/whoami'),
@@ -196,11 +213,14 @@ export const api = {
 
   certificates: {
     list: () => request<ApiCertificate[]>('GET', '/api/certificates'),
-    create: (c: { domain: string }) =>
-      request<ApiCertificate>('POST', '/api/certificates', { id: '00000000-0000-0000-0000-000000000000', domain: c.domain, issuer: '', status: 'Unknown', expiresAt: null, managed: true }),
+    create: (c: { domain: string; challenge: ChallengeName }) => request<ApiCertificate>('POST', '/api/certificates', c),
+    setChallenge: (id: string, challenge: ChallengeName) =>
+      request<ApiCertificate>('PUT', `/api/certificates/${id}`, { challenge }),
     remove: (id: string) => request<void>('DELETE', `/api/certificates/${id}`),
     status: (id: string) => request<CertStatus>('GET', `/api/certificates/${id}/status`),
-    renew: (id: string) => request<unknown>('POST', `/api/certificates/${id}/renew`),
+    // 202 once the renewal is under way; the row's renewPending clears when a new certificate is served.
+    renew: (id: string) => request<ApiCertificate>('POST', `/api/certificates/${id}/renew`),
+    challenges: () => request<CertificateChallenge[]>('GET', '/api/certificates/challenges'),
   },
 
   users: {

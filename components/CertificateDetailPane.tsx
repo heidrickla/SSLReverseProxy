@@ -1,55 +1,54 @@
 import React, { useState } from 'react';
-import { Certificate, CertificateStatus } from '../types';
+import { Certificate } from '../types';
 import Button from './Button';
 import XIcon from './icons/XIcon';
 import ConfirmationModal from './ConfirmationModal';
+import CertificateStatusBadge from './CertificateStatusBadge';
 import { useAuth } from '../contexts/AuthContext';
+import { apiErrorMessage, ChallengeName } from '../services/apiClient';
+import { canRenew, challengeLabel } from '../utils/certificates';
 
 const DetailItem: React.FC<{ label: string, value: React.ReactNode }> = ({ label, value }) => (
-    <div className="flex justify-between items-center py-2.5 border-b border-border">
-        <span className="text-sm font-medium text-on-surface-muted">{label}</span>
-        <span className="text-sm text-on-surface text-right tabular-nums">{value}</span>
+    <div className="flex justify-between items-center gap-4 py-2.5 border-b border-border">
+        <span className="text-sm font-medium text-on-surface-muted shrink-0">{label}</span>
+        <span className="text-sm text-on-surface text-right tabular-nums min-w-0 break-all">{value}</span>
     </div>
 );
 
-const StatusBadge: React.FC<{ status: CertificateStatus }> = ({ status }) => {
-    const statusClasses = {
-        valid: 'bg-success/15 text-success',
-        expiring: 'bg-warning/15 text-warning',
-        expired: 'bg-danger/15 text-danger',
-    };
-    return (
-        <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${statusClasses[status]}`}>
-            {status.charAt(0).toUpperCase() + status.slice(1)}
-        </span>
-    );
-};
+const date = (value: string | null) => value ? new Date(value).toLocaleDateString() : '—';
 
 interface CertificateDetailPaneProps {
   certificate: Certificate;
   onClose: () => void;
+  onRenew: () => void;
+  onError: (message: string) => void;
   onDeleteCertificate: (certificateId: string) => void;
 }
 
-const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certificate, onClose, onDeleteCertificate }) => {
-  const { hasPermission } = useAuth();
-  const canCreate = hasPermission('cert:create');
-  const canDelete = hasPermission('cert:delete');
+const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certificate, onClose, onRenew, onError, onDeleteCertificate }) => {
+  const { hasPermission, setCertificateChallenge } = useAuth();
+  const canWrite = hasPermission('cert:create');
+  const canDelete = hasPermission('cert:delete') && certificate.source === 'manual';
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const handleConfirmDelete = () => {
     onDeleteCertificate(certificate.id);
     setIsDeleteConfirmOpen(false);
   };
-  
-  const getDaysRemaining = () => {
-    const expires = new Date(certificate.expiresAt).getTime();
-    const now = new Date().getTime();
-    const diff = expires - now;
-    if (diff < 0) return 'Expired';
-    const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-    return `${days} day(s)`;
+
+  const changeChallenge = async (challenge: ChallengeName) => {
+    setSaving(true);
+    try {
+      await setCertificateChallenge(certificate.id, challenge);
+    } catch (e) {
+      onError(`${certificate.domain}: ${apiErrorMessage(e, 'The validation method could not be changed.')}`);
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const days = certificate.daysRemaining;
 
   return (
     <>
@@ -67,22 +66,41 @@ const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certifica
                         <XIcon className="w-5 h-5" />
                     </button>
                 </div>
-                
+
+                {certificate.lastError && (
+                    <div role="alert" className="mb-6 rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-on-surface break-words">
+                        {certificate.lastError}
+                    </div>
+                )}
+
                 <h4 className="text-sm font-semibold text-on-surface mb-2">Details</h4>
                 <div className="mb-6">
-                    <DetailItem label="Common name" value={certificate.domain} />
-                    <DetailItem label="Issuer" value={certificate.issuer} />
-                    <DetailItem label="Status" value={<StatusBadge status={certificate.status} />} />
-                    <DetailItem label="Issued" value={new Date(certificate.issuedAt).toLocaleDateString()} />
-                    <DetailItem label="Expires" value={new Date(certificate.expiresAt).toLocaleDateString()} />
-                    <DetailItem label="Days remaining" value={getDaysRemaining()} />
-                    <DetailItem label="Serial number" value={<span className="font-mono text-xs">{certificate.serialNumber}</span>} />
-                    <DetailItem label="Algorithm" value={certificate.algorithm} />
+                    <DetailItem label="Name" value={certificate.domain} />
+                    <DetailItem label="Source" value={certificate.source === 'rule' ? 'TLS rule' : 'Manual'} />
+                    <DetailItem label="Validation" value={canWrite ? (
+                        <select aria-label="Validation" value={certificate.challenge} disabled={saving}
+                            onChange={e => changeChallenge(e.target.value as ChallengeName)}
+                            className="field py-1 text-sm w-auto">
+                            {(Object.keys(challengeLabel) as ChallengeName[]).map(c => <option key={c} value={c}>{challengeLabel[c]}</option>)}
+                        </select>
+                    ) : challengeLabel[certificate.challenge]} />
+                    <DetailItem label="Status" value={<CertificateStatusBadge status={certificate.status} renewPending={certificate.renewPending} />} />
+                    <DetailItem label="Issuer" value={certificate.issuer || '—'} />
+                    <DetailItem label="Issued" value={date(certificate.issuedAt)} />
+                    <DetailItem label="Expires" value={date(certificate.expiresAt)} />
+                    <DetailItem label="Days remaining" value={days === null ? '—' : days < 0 ? 'Expired' : `${days}`} />
+                    <DetailItem label="Serial number" value={<span className="font-mono text-xs">{certificate.serialNumber ?? '—'}</span>} />
+                    <DetailItem label="Algorithm" value={certificate.algorithm ?? '—'} />
+                    <DetailItem label="Last checked" value={certificate.checkedAt ? new Date(certificate.checkedAt).toLocaleString() : '—'} />
                 </div>
 
-                {(canCreate || canDelete) && (
+                {(canWrite || canDelete) && (
                     <div className="mt-auto pt-6 border-t border-border flex space-x-2 shrink-0">
-                        {canCreate && <Button variant="secondary" className="w-full">Renew</Button>}
+                        {canWrite && (
+                            <Button variant="secondary" className="w-full" disabled={!canRenew(certificate)} onClick={onRenew}>
+                                {certificate.renewPending ? 'Renewing' : 'Renew'}
+                            </Button>
+                        )}
                         {canDelete && <Button variant="danger" className="w-full" onClick={() => setIsDeleteConfirmOpen(true)}>Delete</Button>}
                     </div>
                 )}
@@ -95,13 +113,13 @@ const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certifica
             @keyframes slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
             .animate-slide-in-right { animation: slide-in-right 0.3s ease-out forwards; }
         `}</style>
-        
+
          <ConfirmationModal
             isOpen={isDeleteConfirmOpen}
             onClose={() => setIsDeleteConfirmOpen(false)}
             onConfirm={handleConfirmDelete}
             title="Delete certificate"
-            message={`Are you sure you want to delete the certificate for "${certificate.domain}"? This action cannot be undone.`}
+            message={`Caddy stops obtaining and renewing a certificate for "${certificate.domain}".`}
         />
     </>
   );

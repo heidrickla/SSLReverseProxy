@@ -49,6 +49,23 @@ public class CertificateStatusEvaluatorTests
         Assert.Equal(CertificateStatus.Expiring, CertificateStatusEvaluator.Evaluate(cert, Now).Status);
     }
 
+    [Theory]
+    // 90-day certificate: the 30-day window applies.
+    [InlineData(90, 31, CertificateStatus.Valid)]
+    [InlineData(90, 29, CertificateStatus.Expiring)]
+    // 12-hour certificate from Caddy's internal CA: expiring in its last 4 hours.
+    [InlineData(0.5, 0.2, CertificateStatus.Valid)]
+    [InlineData(0.5, 0.16, CertificateStatus.Expiring)]
+    // 45-day certificate: its last 15 days.
+    [InlineData(45, 16, CertificateStatus.Valid)]
+    [InlineData(45, 14, CertificateStatus.Expiring)]
+    public void ExpiringWindow_IsAThirdOfTheLifetimeAtMost(double lifetimeDays, double remainingDays, CertificateStatus expected)
+    {
+        var expires = Now.AddDays(remainingDays);
+        var cert = new Certificate { Status = CertificateStatus.Valid, IssuedAt = expires.AddDays(-lifetimeDays), ExpiresAt = expires };
+        Assert.Equal(expected, CertificateStatusEvaluator.Evaluate(cert, Now).Status);
+    }
+
     [Fact]
     public void Expired_WhenPast()
     {
@@ -661,7 +678,15 @@ public class CaddyHardeningTests
         Assert.Null(cfg["apps"]!["pki"]);
 
         // No email leaves Caddy's default issuers in place.
-        Assert.Null(Build(Rule())["apps"]!["tls"]);
+        Assert.Null(Build(Rule())["apps"]!["tls"]!["automation"]!["policies"]);
+    }
+
+    [Fact]
+    public void AcmeStaging_IsUsedWithoutAContactEmail()
+    {
+        var issuer = Build(Rule(), new ProxyOptions { UseAcmeStaging = true })["apps"]!["tls"]!["automation"]!["policies"]![0]!["issuers"]![0]!;
+        Assert.Equal("https://acme-staging-v02.api.letsencrypt.org/directory", (string?)issuer["ca"]);
+        Assert.Null(issuer["email"]);
     }
 
     [Fact]

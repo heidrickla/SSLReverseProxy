@@ -1,12 +1,12 @@
 import { Area } from 'react-easy-crop';
 import { Permission } from './utils/permissions';
-import type { Rule } from './services/apiClient';
+import type { ChallengeName, Rule } from './services/apiClient';
 
 export type View = 'dashboard' | 'proxy' | 'servers' | 'ssl' | 'users' | 'audit-log' | 'settings';
 
 // From the control plane's background probe of each enabled rule's upstreams; 'unknown' until the first probe.
 export type ServerStatus = 'active' | 'inactive' | 'error' | 'unknown';
-export type CertificateStatus = 'valid' | 'expiring' | 'expired' | 'issuing';
+export type CertificateStatus = 'valid' | 'expiring' | 'expired' | 'issuing' | 'failed' | 'unknown';
 export type UserRole = 'Admin' | 'Editor' | 'Viewer';
 
 export interface Server {
@@ -25,15 +25,22 @@ export interface Server {
   rules: Rule[];
 }
 
+// Rows for TLS rules' hosts come and go with the rules; manual rows name a host or wildcard on their own.
 export interface Certificate {
   id: string;
   domain: string;
   issuer: string;
   status: CertificateStatus;
-  issuedAt: string;
-  expiresAt: string;
-  serialNumber: string;
-  algorithm: string;
+  daysRemaining: number | null;
+  issuedAt: string | null;
+  expiresAt: string | null;
+  serialNumber: string | null;
+  algorithm: string | null;
+  source: 'rule' | 'manual';
+  challenge: ChallengeName;
+  lastError: string | null;
+  checkedAt: string | null;
+  renewPending: boolean;
 }
 
 export interface User {
@@ -82,13 +89,6 @@ export interface ThemeContextType {
   setScale: (scale: number) => void;
 }
 
-export interface CloudflareCredential {
-  id: string; // Will use the Zone ID
-  name: string; // Formatted name for dropdown
-  apiToken: string;
-  zoneId: string;
-}
-
 export interface AuthContextType {
   currentUser: User | null;
   authReady: boolean;
@@ -107,12 +107,9 @@ export interface AuthContextType {
   addServer: (newServerData: { name: string; ip: string; os: 'linux' | 'windows'; }) => void;
   updateServer: (updatedServer: Server) => void;
   deleteServer: (serverId: string) => void;
-  addCertificate: (newCertData: { 
-    domain: string; 
-    provider: string; 
-    method: string; 
-    cloudflareApiToken?: string;
-    cloudflareZoneId?: string;
-  }) => void;
-  deleteCertificate: (certificateId: string) => void;
+  addCertificate: (newCertData: { domain: string; challenge: ChallengeName }) => Promise<void>;
+  deleteCertificate: (certificateId: string) => Promise<void>;
+  renewCertificate: (certificateId: string) => Promise<void>;
+  setCertificateChallenge: (certificateId: string, challenge: ChallengeName) => Promise<void>;
+  reloadData: () => Promise<void>;
 }

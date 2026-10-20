@@ -29,8 +29,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const {
         users, addUser,
         servers, addServer, updateServer, deleteServer,
-        certificates, addCertificate, deleteCertificate,
-        auditLogs
+        certificates, addCertificate, deleteCertificate, renewCertificate, setCertificateChallenge,
+        auditLogs, reload
     } = useApiData(!!currentUser);
 
     // Restore a session from a stored API key on load; with no stored key, try
@@ -126,6 +126,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         certificates,
         addCertificate,
         deleteCertificate,
+        renewCertificate,
+        setCertificateChallenge,
+        reloadData: reload,
         auditLogs,
     };
 

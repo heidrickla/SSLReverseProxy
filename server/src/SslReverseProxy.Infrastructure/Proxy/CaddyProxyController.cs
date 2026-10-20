@@ -26,6 +26,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
     private readonly TimeProvider _clock;
     private readonly TrafficRecorder _traffic;
     private readonly SecretRedactor _redactor;
+    private readonly CaddyCertificateLog _certificates;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Process? _process;
@@ -38,7 +39,8 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         ILogger<CaddyProxyController> logger,
         TimeProvider clock,
         TrafficRecorder traffic,
-        SecretRedactor redactor)
+        SecretRedactor redactor,
+        CaddyCertificateLog certificates)
     {
         _options = options.Value;
         _httpFactory = httpFactory;
@@ -46,6 +48,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         _clock = clock;
         _traffic = traffic;
         _redactor = redactor;
+        _certificates = certificates;
     }
 
     public async Task<ProxyStatus> GetStatusAsync(CancellationToken ct = default)
@@ -138,8 +141,9 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         finally { _gate.Release(); }
     }
 
-    public async Task<ProxyStatus> ApplyConfigurationAsync(IReadOnlyCollection<ProxyRule> rules, CancellationToken ct = default)
+    public async Task<ProxyStatus> ApplyConfigurationAsync(ProxyPlan plan, CancellationToken ct = default)
     {
+        var rules = plan.Rules;
         await _gate.WaitAsync(ct);
         try
         {
@@ -150,7 +154,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
 
             if (PlaceholderIssues(rules).FirstOrDefault() is { } refused)
                 return Faulted(refused);
-            var config = CaddyConfigBuilder.Build(rules, _options);
+            var config = CaddyConfigBuilder.Build(plan, _options);
             var ok = await PostConfigAsync(config, ct);
             if (!ok)
                 return Faulted("Failed to push configuration to the Caddy admin API.");
@@ -161,11 +165,12 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         finally { _gate.Release(); }
     }
 
-    public string BuildConfigJson(IReadOnlyCollection<ProxyRule> rules) =>
-        CaddyConfigBuilder.Build(rules, _options).ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    public string BuildConfigJson(ProxyPlan plan) =>
+        CaddyConfigBuilder.Build(plan, _options).ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
 
-    public async Task<ProxyValidationResult> ValidateConfigurationAsync(IReadOnlyCollection<ProxyRule> rules, CancellationToken ct = default)
+    public async Task<ProxyValidationResult> ValidateConfigurationAsync(ProxyPlan plan, CancellationToken ct = default)
     {
+        var rules = plan.Rules;
         var issues = new List<string>();
 
         // Structural checks always run, regardless of whether Caddy is installed.
@@ -196,7 +201,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         var engineValidated = false;
         if (issues.Count == 0 && BinaryAvailable())
         {
-            engineValidated = await RunCaddyValidateAsync(BuildConfigJson(rules), issues, ct);
+            engineValidated = await RunCaddyValidateAsync(BuildConfigJson(plan), issues, ct);
         }
 
         return new ProxyValidationResult(issues.Count == 0, issues, engineValidated);
@@ -342,6 +347,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
     {
         if (string.IsNullOrWhiteSpace(e.Data)) return;
         var line = e.Data;
+        _certificates.Observe(line);
         var level = line.Contains("\"level\":\"error\"") || line.Contains("\"level\":\"fatal\"") || line.Contains("\"level\":\"panic\"")
             ? LogLevel.Error
             : line.Contains("\"level\":\"warn\"") ? LogLevel.Warning : LogLevel.Debug;

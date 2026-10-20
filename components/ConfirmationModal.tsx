@@ -8,9 +8,13 @@ interface ConfirmationModalProps {
   onConfirm: () => void;
   title: string;
   message: string;
+  confirmLabel?: string;
+  confirmVariant?: 'primary' | 'danger';
 }
 
-const ConfirmationModal: React.FC<ConfirmationModalProps> = ({ isOpen, onClose, onConfirm, title, message }) => {
+const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
+  isOpen, onClose, onConfirm, title, message, confirmLabel = 'Delete', confirmVariant = 'danger',
+}) => {
   if (!isOpen) return null;
 
   return (
@@ -21,8 +25,8 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({ isOpen, onClose, 
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={onConfirm}>
-            Delete
+          <Button variant={confirmVariant} onClick={onConfirm}>
+            {confirmLabel}
           </Button>
         </div>
       </div>

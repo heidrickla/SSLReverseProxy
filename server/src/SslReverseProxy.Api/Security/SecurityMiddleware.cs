@@ -36,6 +36,9 @@ public sealed class SecurityOptions
     /// leaving it empty trusts only loopback.
     /// </summary>
     public string[] TrustedProxies { get; set; } = Array.Empty<string>();
+
+    /// <summary>Requests a client IP may make in a minute before it gets 429.</summary>
+    public int RequestsPerMinute { get; set; } = 100;
 }
 
 /// <summary>

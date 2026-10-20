@@ -41,3 +41,17 @@ public enum CertificateStatus
     Issuing = 4,
     Failed = 5,
 }
+
+/// <summary>Why a certificate row exists: a TLS rule's host, or a name registered on its own.</summary>
+public enum CertificateSource
+{
+    Rule = 0,
+    Manual = 1,
+}
+
+/// <summary>How the ACME CA validates the name.</summary>
+public enum CertificateChallenge
+{
+    Http = 0,
+    DnsCloudflare = 1,
+}

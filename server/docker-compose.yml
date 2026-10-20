@@ -18,6 +18,8 @@ services:
       # manager — do not bake them into the image.
       Security__ApiKeyPepper: "${SSLRP_API_KEY_PEPPER:?set SSLRP_API_KEY_PEPPER}"
       Proxy__AcmeContactEmail: "${SSLRP_ACME_EMAIL:-}"
+      # DNS-01 through Cloudflare: a token with Zone:Read and DNS:Edit. Caddy reads it from its environment.
+      Proxy__CloudflareApiToken: "${SSLRP_CLOUDFLARE_API_TOKEN:-}"
       Security__CorsAllowedOrigins__0: "${SSLRP_SPA_ORIGIN:-}"
     volumes:
       - sslrp-data:/data

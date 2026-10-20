@@ -46,6 +46,9 @@ builder.Services.AddSingleton<ServerHealthMonitor>();
 builder.Services.AddSingleton<IServerHealthStore>(sp => sp.GetRequiredService<ServerHealthMonitor>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerHealthMonitor>());
 builder.Services.AddHostedService<TrafficSampler>();
+builder.Services.AddSingleton<CertificateMonitor>();
+builder.Services.AddSingleton<ICertificateChecks>(sp => sp.GetRequiredService<CertificateMonitor>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<CertificateMonitor>());
 
 builder.Services.AddAuthentication(ApiKeyDefaults.Scheme)
     .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(ApiKeyDefaults.Scheme, _ => { });
@@ -75,7 +78,7 @@ builder.Services.AddRateLimiter(options =>
         var key = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
         {
-            PermitLimit = 100,
+            PermitLimit = Math.Max(1, securityOptions.RequestsPerMinute),
             Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0,
         });
@@ -141,6 +144,7 @@ if (app.Environment.IsDevelopment())
 app.MapProxyEndpoints();
 app.MapServerEndpoints();
 app.MapAdminEndpoints();
+app.MapCertificateEndpoints();
 
 // Seed:Demo fills a new Development database with sample data, for screenshots and the browser smoke test.
 var seedDemo = app.Configuration.GetValue<bool>("Seed:Demo");

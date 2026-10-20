@@ -3,9 +3,10 @@
 # tests against the real API and a running Caddy, the container image, a
 # dependency CVE audit and a committed-secret guard. No credentials.
 #
-# Caddy is built with the caddy-ratelimit plugin at the pins in server/Dockerfile
-# (.github/actions/caddy) and cached on them. SSLRP_REQUIRE_CADDY=1 makes the
-# Caddy tests fail, not skip, when the binary or the plugin is missing.
+# Caddy is built with the caddy-ratelimit plugin and the Cloudflare DNS provider
+# at the pins in server/Dockerfile (.github/actions/caddy) and cached on them.
+# SSLRP_REQUIRE_CADDY=1 makes the Caddy tests fail, not skip, when the binary or
+# a module is missing.
 #
 # The forge holds main and GitHub mirrors it. Every job runs on GitHub only:
 # the forge's shared runner skips them (github.server_url).
@@ -192,7 +193,7 @@ jobs:
           path: playwright-report
           retention-days: 7
 
-  # server/Dockerfile built as shipped: its Caddy carries the rate-limit plugin,
+  # server/Dockerfile built as shipped: its Caddy carries both modules,
   # and the API answers the compose healthcheck's own command inside the container.
   image:
     name: Container image
@@ -208,11 +209,12 @@ jobs:
           tags: sslreverseproxy:ci
           cache-from: type=gha,scope=image
           cache-to: type=gha,mode=max,scope=image
-      - name: Rate-limit plugin present, healthcheck answers
+      - name: Caddy modules present, healthcheck answers
         run: |
           set -euo pipefail
           modules=$(docker run --rm --entrypoint caddy sslreverseproxy:ci list-modules)
           grep -qx 'http.handlers.rate_limit' <<< "$modules"
+          grep -qx 'dns.providers.cloudflare' <<< "$modules"
           docker run -d --name sslrp -e Security__ApiKeyPepper="$(openssl rand -base64 32)" sslreverseproxy:ci
           for _ in $(seq 1 60); do
             [ "$(docker inspect -f '{{.State.Running}}' sslrp)" = true ] || break

@@ -110,7 +110,15 @@ public sealed record SnapshotDto(long Id, DateTimeOffset CreatedAt, string Actor
 public sealed record UpstreamHealthDto(bool Reachable, int? StatusCode, long? LatencyMs, string? Error);
 public sealed record CertStatusDto(Guid Id, string Domain, string Status, int? DaysRemaining, DateTimeOffset? ExpiresAt);
 public sealed record ReadyDto(bool Ready, bool Database, string ProxyState);
-public sealed record CertificateDto(Guid Id, string Domain, string Issuer, string Status, DateTimeOffset? ExpiresAt, bool Managed);
+/// <summary>A certificate row. Status is derived from the served certificate's dates at read time.</summary>
+public sealed record CertificateDto(
+    Guid Id, string Domain, string Issuer, string Status, int? DaysRemaining,
+    DateTimeOffset? IssuedAt, DateTimeOffset? ExpiresAt, string? SerialNumber, string? Algorithm,
+    string Source, string Challenge, string? LastError, DateTimeOffset? CheckedAt, bool RenewPending, bool Managed);
+public sealed record CreateCertificateRequest(string Domain, string? Challenge);
+public sealed record UpdateCertificateRequest(string Challenge);
+/// <summary>A validation method and whether the server can use it now. Never carries the token.</summary>
+public sealed record ChallengeDto(string Name, bool Available, bool Wildcard, string? Reason);
 public sealed record UserDto(Guid Id, string Name, string Email, string Role, bool IsActive, DateTimeOffset? LastSeenAt);
 public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt);
 public sealed record IssuedApiKeyDto(Guid Id, string Name, string Token, DateTimeOffset? ExpiresAt);
@@ -152,7 +160,13 @@ public static class DtoMappings
         SkipAccessLog = r.SkipAccessLog,
     };
     public static SnapshotDto ToDto(this ConfigSnapshot s) => new(s.Id, s.CreatedAt, s.Actor, s.RuleCount, s.Note);
-    public static CertificateDto ToDto(this Certificate c) => new(c.Id, c.Domain, c.Issuer, c.Status.ToString(), c.ExpiresAt, c.Managed);
+    public static CertificateDto ToDto(this Certificate c, DateTimeOffset now)
+    {
+        var health = CertificateStatusEvaluator.Evaluate(c, now);
+        return new(c.Id, c.Domain, c.Issuer, health.Status.ToString(), health.DaysRemaining,
+            c.IssuedAt, c.ExpiresAt, c.SerialNumber, c.Algorithm, c.Source.ToString(), c.Challenge.ToString(),
+            c.LastError, c.CheckedAt, c.RenewFromSerial is not null, c.Managed);
+    }
     public static UserDto ToDto(this User u) => new(u.Id, u.Name, u.Email, u.Role.ToString(), u.IsActive, u.LastSeenAt);
     public static ApiKeyDto ToDto(this ApiKey k) => new(k.Id, k.Name, k.Prefix, k.CreatedAt, k.ExpiresAt, k.RevokedAt);
     public static AuditDto ToDto(this AuditEntry a) => new(a.Id, a.Timestamp, a.ActorName, a.Action, a.TargetType, a.TargetName, a.Success, a.SourceIp);

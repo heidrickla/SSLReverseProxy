@@ -24,9 +24,9 @@ The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a
 | Authorization | Deny-by-default. Every endpoint requires a permission; roles map to permissions server-side (`Core/Security/Permissions.cs`). |
 | SSRF | Every upstream is validated server-side (`ProxyTargetValidator`): http(s) only, cloud-metadata and link-local blocked, private and loopback gated by policy. |
 | Transport | HSTS and HTTPS redirect in Production; security headers and a JSON-only CSP on every response. |
-| Abuse | Per-IP fixed-window rate limit, 100 a minute. |
+| Abuse | Per-IP fixed-window rate limit, `Security:RequestsPerMinute` (100). |
 | Audit | Append-only log of every control and mutation action (actor, action, target, source IP). |
-| Secrets | Pepper, client-certificate thumbprints and ACME email from configuration, user-secrets or environment. Configured secret values are masked in Caddy's forwarded output, `/load` errors and validation issues, and a rollback config holding one is refused. |
+| Secrets | Pepper, Cloudflare token, client-certificate thumbprints and ACME email from configuration, user-secrets or environment. The Cloudflare token stays on the server: the UI asks only which validation methods are available. Configured secret values are masked in Caddy's forwarded output, `/load` errors and validation issues, and a rollback config holding one is refused. |
 | Caddy process | Started with a fixed environment: system paths, its data and config directories, outbound proxy and trust-store variables, and the Cloudflare token when set. Rule text may not contain `{` or `}`, which Caddy reads as placeholders. |
 
 ## Configuration
@@ -40,9 +40,15 @@ The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a
 | `Security:RequireMutualTls`, `Security:AllowedClientCertificateThumbprints` | Require and pin client certificates. |
 | `Security:CorsAllowedOrigins` | SPA origins; empty allows no cross-origin access. |
 | `Security:TrustedProxies` | Proxies in front of the control API whose `X-Forwarded-For` is honoured. |
+| `Security:RequestsPerMinute` | Requests one client IP may make in a minute before it gets 429 (100). |
 | `Proxy:CaddyPath`, `Proxy:AdminEndpoint` | Caddy binary and its admin endpoint (loopback). |
 | `Proxy:AcmeContactEmail`, `Proxy:UseAcmeStaging` | ACME account email and Let's Encrypt staging. |
-| `Proxy:CertificateIssuer` | `acme` (default: Let's Encrypt with `AcmeContactEmail`, Caddy's default issuers without it) or `internal` (Caddy's own CA; its root is not installed in the host trust store). |
+| `Proxy:CertificateIssuer` | `acme` (default: Let's Encrypt with `AcmeContactEmail` or `UseAcmeStaging`, Caddy's default issuers with neither) or `internal` (Caddy's own CA; its root is not installed in the host trust store). |
+| `Proxy:CloudflareApiToken` | Cloudflare API token for DNS-01, with Zone:Read and DNS:Edit on the zones. Caddy reads it from its environment; configs hold `{env.SSLRP_CLOUDFLARE_API_TOKEN}`. A value in a shape Cloudflare does not issue keeps DNS-01 names out of the config, and their rows show why. |
+| `Proxy:DnsChallengeResolvers` | Resolvers Caddy asks to see a DNS-01 record, comma-separated `host:port`. Empty uses the system's. |
+| `Proxy:CertificateCheckSeconds` | Seconds between reads of the certificate Caddy serves for each name (300; 0 off, which also turns Renew off). |
+| `Proxy:RenewCheckSeconds` | Caddy's certificate maintenance interval (60). |
+| `Proxy:RenewMinimumAgeMinutes` (60), `Proxy:RenewTimeoutMinutes` (10) | Wait between forced renewals of one name, and how long one may take before it is recorded as failed. |
 | `Proxy:HttpPort` (80), `Proxy:HttpsPort` (443) | Caddy's listeners. TLS rules are served on the HTTPS port only. The HTTP port serves plaintext rules, redirects TLS hosts and answers ACME challenges. Redirects name the standard port, so a non-default `HttpsPort` needs 443 forwarded to it. |
 | `Proxy:ServerHealthIntervalSeconds` | Seconds between background probes of every enabled rule's upstreams (60; 0 off). A server is `Active` (every upstream answered), `Error` (one or more did not), `Inactive` (no enabled rule) or `Unknown` (not probed). A successful write under `/api/servers` probes again at once. Probes apply the SSRF policy. |
 | `Proxy:TrafficSampleSeconds` | Seconds between dashboard traffic samples (60; 0 off). Each sample is the change in Caddy's metrics since the last; samples are kept 25 hours. |
@@ -79,13 +85,13 @@ The first run creates or migrates the database and seeds a bootstrap admin with 
 
 ### Caddy
 
-The image and CI build Caddy with [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) at the versions pinned by `CADDY_VERSION` and `CADDY_RATELIMIT` in the [`Dockerfile`](Dockerfile). The same build locally, with Go:
+The image and CI build Caddy with [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) and [caddy-dns/cloudflare](https://github.com/caddy-dns/cloudflare) at the versions pinned by `CADDY_VERSION`, `CADDY_RATELIMIT` and `CADDY_CLOUDFLARE` in the [`Dockerfile`](Dockerfile). The same build locally, with Go:
 
 ```bash
-go run github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7 build v2.11.7 --with github.com/mholt/caddy-ratelimit@5625512f24f6f59d6f64fb3aafe5eecff0b286db --output ~/.sslrp/caddy/caddy
+go run github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7 build v2.11.7 --with github.com/mholt/caddy-ratelimit@5625512f24f6f59d6f64fb3aafe5eecff0b286db --with github.com/caddy-dns/cloudflare@v0.2.4 --output ~/.sslrp/caddy/caddy
 ```
 
-Caddy 2.7 or later: the IP lists emit the `client_ip` matcher. Rate-limited rules need caddy-ratelimit; a stock Caddy rejects the config. Basic auth is native.
+Caddy 2.7 or later: the IP lists emit the `client_ip` matcher. Rate-limited rules need caddy-ratelimit and DNS-01 names need caddy-dns/cloudflare; a stock Caddy rejects either config. Basic auth is native.
 
 ## Endpoints
 
@@ -96,7 +102,7 @@ Meta
 - `GET /api/health`: anonymous liveness. `GET /api/ready`: anonymous readiness (database and proxy).
 - `GET /api/bootstrap-key`: one-time first-run key claim (Development and loopback only; 404 otherwise).
 - `GET /api/whoami`: current principal and permissions.
-- `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes. Headers go out once the subscriber is registered, so no event published after the client has them is missed.
+- `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes, `certificate.status` when a certificate's does, and `certificate.renewed` or `certificate.renew_failed` when a forced renewal ends. Headers go out once the subscriber is registered, so no event published after the client has them is missed.
 
 Control service
 
@@ -147,9 +153,17 @@ curl -X PUT .../rules/$ID -H 'If-Match: "3"' -H 'Content-Type: application/json'
 
 Certificates
 
-- `GET/POST/DELETE /api/certificates`: ACME-managed by Caddy.
-- `GET /api/certificates/{id}/status`: status from the certificate dates.
-- `POST /api/certificates/{id}/renew`: marks the certificate issuing and reloads.
+Each enabled TLS rule's host has a row, which the certificate monitor adds and removes with the rules. A manual row names a host or a wildcard (`*.example.com`) that Caddy obtains with no rule naming it, served by SNI on the HTTPS port. Every `CertificateCheckSeconds` the monitor reads the certificate Caddy serves for each name with a TLS handshake on loopback (a wildcard as `sslrp-check.<base>`) and takes obtain errors from Caddy's log.
+
+| Endpoint | |
+| --- | --- |
+| `GET /api/certificates` | Rows with status from the served certificate's dates: `Valid`, `Expiring` (30 days or less), `Expired`, `Issuing` (none served yet), `Failed` (Caddy logged an error and none is served) or `Unknown` (not read yet). `lastError` is Caddy's last error for the name, redacted. |
+| `GET /api/certificates/challenges` | `Http` and `DnsCloudflare`, each with whether it can be used now, why not, and whether it validates a wildcard. |
+| `POST /api/certificates` | `{domain, challenge}` adds a manual row. A wildcard needs `DnsCloudflare` unless `CertificateIssuer` is `internal`, and `DnsCloudflare` needs a usable token. 409 when the name has a row. |
+| `PUT /api/certificates/{id}` | `{challenge}` changes how the name is validated, for rule rows too. |
+| `DELETE /api/certificates/{id}` | Manual rows only; a rule row goes with its rule. |
+| `POST /api/certificates/{id}/renew` | Forces a reissue. The config marks the name due for renewal, Caddy replaces the certificate in place while the old one keeps serving, and the monitor drops the mark once a new serial is served or after `RenewTimeoutMinutes`. 409 while the proxy is stopped, the monitor is off, a renewal is under way, no certificate is served, or within `RenewMinimumAgeMinutes` of the last request. Snapshots are taken without the mark, so a rollback does not renew again. |
+| `GET /api/certificates/{id}/status` | Status and days remaining. |
 
 Users, keys, audit
 
@@ -162,7 +176,7 @@ Users, keys, audit
 - Secrets: `Security__ApiKeyPepper` (random, base64) through the environment or user-secrets; Production logs a warning when it is unset. ACME email and client-certificate thumbprints the same way.
 - TLS: HSTS and HTTPS redirect are on in Production. Terminate TLS (or mTLS) for the control API at the edge, and put it behind an authenticating gateway or set `Security:RequireMutualTls`.
 - Behind a proxy: list it in `Security:TrustedProxies` (IP or CIDR) so the rate limiter and audit log see the client IP from `X-Forwarded-For`.
-- Containers: the [`Dockerfile`](Dockerfile) bundles the API with Caddy and its plugins; the API runs Caddy as a child process. The database, proxy config and Caddy's certificates live in `/data`, a volume in [`docker-compose.yml`](docker-compose.yml). Environment: `SSLRP_API_KEY_PEPPER`, optional `SSLRP_ACME_EMAIL` and `SSLRP_SPA_ORIGIN`.
+- Containers: the [`Dockerfile`](Dockerfile) bundles the API with Caddy and its plugins; the API runs Caddy as a child process. The database, proxy config and Caddy's certificates live in `/data`, a volume in [`docker-compose.yml`](docker-compose.yml). Environment: `SSLRP_API_KEY_PEPPER`, optional `SSLRP_ACME_EMAIL`, `SSLRP_CLOUDFLARE_API_TOKEN` and `SSLRP_SPA_ORIGIN`.
 
 ## Frontend
 

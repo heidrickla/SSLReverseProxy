@@ -49,8 +49,19 @@ public class ServerHealthTests
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        Assert.Equal(4, await db.Certificates.CountAsync());
-        Assert.Equal(1, await db.Certificates.CountAsync(c => c.Status == CertificateStatus.Expiring));
+        // The four seeded rows, plus a rule row the certificate monitor adds for each other enabled TLS rule.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        List<Certificate> certs = [];
+        while (DateTime.UtcNow < deadline && certs.Count != 6)
+        {
+            certs = await db.Certificates.AsNoTracking().ToListAsync();
+            if (certs.Count != 6) await Task.Delay(100);
+        }
+        Assert.Equal(
+            ["api.example.com:Manual", "app.example.com:Rule", "docs.example.com:Rule", "git.example.com:Rule",
+             "portal.example.com:Manual", "wiki.example.com:Rule"],
+            certs.Select(c => $"{c.Domain}:{c.Source}").Order(StringComparer.Ordinal));
+        Assert.Equal(1, certs.Count(c => c.Status == CertificateStatus.Expiring));
         Assert.Equal(3, await db.Users.CountAsync());
         Assert.Equal(4, await db.AuditEntries.CountAsync());
     }

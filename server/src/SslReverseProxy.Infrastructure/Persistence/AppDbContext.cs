@@ -77,7 +77,10 @@ public class AppDbContext : DbContext
         b.Entity<Certificate>(e =>
         {
             e.Property(c => c.Domain).HasMaxLength(253).IsRequired();
-            e.HasIndex(c => c.Domain);
+            e.HasIndex(c => c.Domain).IsUnique();
+            e.Property(c => c.LastError).HasMaxLength(1000);
+            e.Property(c => c.RenewFromSerial).HasMaxLength(128);
+            e.Property(c => c.SerialNumber).HasMaxLength(128);
         });
 
         b.Entity<AuditEntry>(e =>

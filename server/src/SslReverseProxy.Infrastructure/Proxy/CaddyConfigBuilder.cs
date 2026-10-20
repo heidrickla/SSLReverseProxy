@@ -33,8 +33,15 @@ public static class CaddyConfigBuilder
     /// </summary>
     public const string HttpServer = "http";
 
-    public static JsonObject Build(IReadOnlyCollection<ProxyRule> rules, ProxyOptions options)
+    /// <summary>Renewal window that puts a certificate due for renewal at once (a forced renewal).</summary>
+    public const double ForcedRenewalRatio = 0.99999;
+
+    public static JsonObject Build(IReadOnlyCollection<ProxyRule> rules, ProxyOptions options) =>
+        Build(new ProxyPlan(rules), options);
+
+    public static JsonObject Build(ProxyPlan plan, ProxyOptions options)
     {
+        var rules = plan.Rules;
         // Caddy runs the first matching terminal route, so the longest path prefix
         // goes first and a host's whole-host rule last. OrderBy is stable.
         var active = rules.Where(r => r.Enabled)
@@ -113,7 +120,12 @@ public static class CaddyConfigBuilder
         // connection while leaving SNI-based certificate selection alone. If
         // every policy carried a match, a handshake matching none would die
         // before any certificate was chosen.
-        if (tlsRoutes.Count > 0)
+        // Manual names Caddy obtains with no route naming them. The HTTPS listener exists for them
+        // too, so they are served by SNI and the certificate monitor can read them.
+        var automated = plan.Certificates.Where(c => c.Automate && ChallengeReady(c, options))
+            .Select(c => c.Domain).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToList();
+
+        if (tlsRoutes.Count > 0 || automated.Count > 0)
         {
             var policy = new JsonObject { ["protocol_min"] = NormalizeTlsVersion(options.TlsMinVersion) };
             var ciphers = ParseCsv(options.TlsCipherSuites);
@@ -137,19 +149,7 @@ public static class CaddyConfigBuilder
         if (options.HttpsPort != 443) http["https_port"] = options.HttpsPort;
         var apps = new JsonObject { ["http"] = http };
 
-        if (BuildIssuer(options) is { } issuer)
-        {
-            apps["tls"] = new JsonObject
-            {
-                ["automation"] = new JsonObject
-                {
-                    ["policies"] = new JsonArray
-                    {
-                        new JsonObject { ["issuers"] = new JsonArray { issuer } },
-                    },
-                },
-            };
-        }
+        apps["tls"] = BuildTlsApp(plan, automated, options);
 
         // Caddy installs its local root in the system trust store by default,
         // which needs elevation and changes the host for every program on it.
@@ -257,7 +257,76 @@ public static class CaddyConfigBuilder
         };
     }
 
-    private static bool UsesInternalIssuer(ProxyOptions options) =>
+    /// <summary>
+    /// Certificate automation. certmagic takes the first policy whose subjects match a name and a
+    /// policy without subjects matches every name, so the per-name policies come before the catch-all.
+    /// </summary>
+    private static JsonObject BuildTlsApp(ProxyPlan plan, IReadOnlyList<string> automated, ProxyOptions options)
+    {
+        // Caddy fixes the maintenance interval when its certificate cache is created, which is the
+        // first config the process loads; every config carries it so that one does too.
+        var automation = new JsonObject { ["renew_interval"] = Seconds(Math.Max(1, options.RenewCheckSeconds)) };
+
+        var policies = new JsonArray();
+        var named = plan.Certificates
+            .Where(c => c.RenewPending || (c.Challenge == CertificateChallenge.DnsCloudflare && ChallengeReady(c, options)))
+            .GroupBy(c => c.Domain, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(c => c.Domain, StringComparer.Ordinal);
+        foreach (var c in named)
+        {
+            var policy = new JsonObject { ["subjects"] = new JsonArray { c.Domain } };
+            if (SubjectIssuer(c, options) is { } subjectIssuer)
+                policy["issuers"] = new JsonArray { subjectIssuer };
+            // Due for renewal at once, so Caddy's next maintenance pass reissues it in place while the
+            // current certificate keeps serving. The monitor drops this once a new serial is served.
+            if (c.RenewPending)
+                policy["renewal_window_ratio"] = ForcedRenewalRatio;
+            policies.Add(policy);
+        }
+        if (BuildIssuer(options) is { } issuer)
+            policies.Add(new JsonObject { ["issuers"] = new JsonArray { issuer } });
+        if (policies.Count > 0)
+            automation["policies"] = policies;
+
+        var tls = new JsonObject { ["automation"] = automation };
+        if (automated.Count > 0)
+            tls["certificates"] = new JsonObject { ["automate"] = ToJsonArray(automated) };
+        return tls;
+    }
+
+    /// <summary>
+    /// Whether the name can be obtained as configured: a DNS challenge needs a usable Cloudflare token,
+    /// and a wildcard needs DNS unless Caddy's internal CA signs it.
+    /// </summary>
+    public static bool ChallengeReady(CertificatePlan c, ProxyOptions options)
+    {
+        if (UsesInternalIssuer(options)) return true;
+        if (c.Challenge == CertificateChallenge.DnsCloudflare) return CloudflareToken.Usable(options);
+        return !CertificateNames.IsWildcard(c.Domain);
+    }
+
+    private static JsonObject? SubjectIssuer(CertificatePlan c, ProxyOptions options)
+    {
+        if (UsesInternalIssuer(options) || c.Challenge != CertificateChallenge.DnsCloudflare)
+            return BuildIssuer(options);
+        var acme = AcmeIssuer(options);
+        var dns = new JsonObject
+        {
+            ["provider"] = new JsonObject
+            {
+                ["name"] = "cloudflare",
+                // Caddy reads the value from its own environment; the config never holds it.
+                ["api_token"] = "{env." + CaddyEnvironment.CloudflareTokenVariable + "}",
+            },
+        };
+        var resolvers = ParseCsv(options.DnsChallengeResolvers);
+        if (resolvers.Count > 0) dns["resolvers"] = ToJsonArray(resolvers);
+        acme["challenges"] = new JsonObject { ["dns"] = dns };
+        return acme;
+    }
+
+    public static bool UsesInternalIssuer(ProxyOptions options) =>
         string.Equals(options.CertificateIssuer?.Trim(), "internal", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Null leaves Caddy's default issuers (Let's Encrypt, then ZeroSSL) in place.</summary>
@@ -265,16 +334,23 @@ public static class CaddyConfigBuilder
     {
         if (UsesInternalIssuer(options))
             return new JsonObject { ["module"] = "internal" };
-        if (string.IsNullOrWhiteSpace(options.AcmeContactEmail))
+        if (string.IsNullOrWhiteSpace(options.AcmeContactEmail) && !options.UseAcmeStaging)
             return null;
-        return new JsonObject
+        return AcmeIssuer(options);
+    }
+
+    private static JsonObject AcmeIssuer(ProxyOptions options)
+    {
+        var acme = new JsonObject
         {
             ["module"] = "acme",
-            ["email"] = options.AcmeContactEmail,
             ["ca"] = options.UseAcmeStaging
                 ? "https://acme-staging-v02.api.letsencrypt.org/directory"
                 : "https://acme-v02.api.letsencrypt.org/directory",
         };
+        if (!string.IsNullOrWhiteSpace(options.AcmeContactEmail))
+            acme["email"] = options.AcmeContactEmail;
+        return acme;
     }
 
     private static JsonObject BuildReverseProxyHandler(ProxyRule rule)

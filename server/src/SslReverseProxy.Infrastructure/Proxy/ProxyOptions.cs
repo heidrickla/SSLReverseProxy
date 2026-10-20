@@ -44,6 +44,24 @@ public sealed class ProxyOptions
     /// </summary>
     public string? CloudflareApiToken { get; set; }
 
+    /// <summary>DNS resolvers Caddy asks to see a DNS-01 record propagate, comma-separated host:port. Null uses the system's.</summary>
+    public string? DnsChallengeResolvers { get; set; }
+
+    /// <summary>Seconds between reads of the certificate Caddy serves for each name. 0 turns the monitor off.</summary>
+    public int CertificateCheckSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// Caddy's certificate maintenance interval, which also bounds how soon a forced renewal starts.
+    /// Caddy fixes it when the proxy process starts, so it is written into every config.
+    /// </summary>
+    public int RenewCheckSeconds { get; set; } = 60;
+
+    /// <summary>A forced renewal is refused for a certificate issued less than this long ago (ACME CAs rate-limit reissues).</summary>
+    public int RenewMinimumAgeMinutes { get; set; } = 60;
+
+    /// <summary>A forced renewal with no new serial after this long is recorded as failed.</summary>
+    public int RenewTimeoutMinutes { get; set; } = 10;
+
     public bool AllowLoopbackUpstreams { get; set; } = true;
     public bool AllowPrivateUpstreams { get; set; } = true;
 

@@ -1,8 +1,8 @@
-name: Caddy with caddy-ratelimit
+name: Caddy with caddy-ratelimit and caddy-dns/cloudflare
 description: >
-  Builds Caddy with the rate-limit plugin at the versions pinned in
-  server/Dockerfile, caches the binary on those pins, and exports its path as
-  SSLRP_TEST_CADDY.
+  Builds Caddy with the rate-limit plugin and the Cloudflare DNS provider at the
+  versions pinned in server/Dockerfile, caches the binary on those pins, and
+  exports its path as SSLRP_TEST_CADDY.
 runs:
   using: composite
   steps:
@@ -12,16 +12,18 @@ runs:
         set -euo pipefail
         version=$(sed -n 's/^ARG CADDY_VERSION=//p' "$GITHUB_WORKSPACE/server/Dockerfile")
         ratelimit=$(sed -n 's/^ARG CADDY_RATELIMIT=//p' "$GITHUB_WORKSPACE/server/Dockerfile")
-        if [ -z "$version" ] || [ -z "$ratelimit" ]; then
-          echo "::error::CADDY_VERSION or CADDY_RATELIMIT not found in server/Dockerfile"; exit 1
+        cloudflare=$(sed -n 's/^ARG CADDY_CLOUDFLARE=//p' "$GITHUB_WORKSPACE/server/Dockerfile")
+        if [ -z "$version" ] || [ -z "$ratelimit" ] || [ -z "$cloudflare" ]; then
+          echo "::error::CADDY_VERSION, CADDY_RATELIMIT or CADDY_CLOUDFLARE not found in server/Dockerfile"; exit 1
         fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "ratelimit=$ratelimit" >> "$GITHUB_OUTPUT"
+        echo "cloudflare=$cloudflare" >> "$GITHUB_OUTPUT"
     - id: cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.sslrp/caddy
-        key: caddy-${{ runner.os }}-${{ steps.pins.outputs.version }}-${{ steps.pins.outputs.ratelimit }}
+        key: caddy-${{ runner.os }}-${{ steps.pins.outputs.version }}-${{ steps.pins.outputs.ratelimit }}-${{ steps.pins.outputs.cloudflare }}
     - if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
@@ -33,6 +35,7 @@ runs:
         go run github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7 build
         v${{ steps.pins.outputs.version }}
         --with github.com/mholt/caddy-ratelimit@${{ steps.pins.outputs.ratelimit }}
+        --with github.com/caddy-dns/cloudflare@${{ steps.pins.outputs.cloudflare }}
         --output "$HOME/.sslrp/caddy/caddy"
     - shell: bash
       run: |
@@ -42,4 +45,5 @@ runs:
         # Captured first: grep -q exiting early would end list-modules on SIGPIPE under pipefail.
         modules=$("$caddy" list-modules)
         grep -qx 'http.handlers.rate_limit' <<< "$modules"
+        grep -qx 'dns.providers.cloudflare' <<< "$modules"
         echo "SSLRP_TEST_CADDY=$caddy" >> "$GITHUB_ENV"

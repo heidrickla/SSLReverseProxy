@@ -2,15 +2,21 @@
 # the Caddy child process (start/stop) and talks to it over the loopback admin
 # API — matching CaddyProxyController's model.
 
-# Caddy and the caddy-ratelimit plugin that per-rule rate limits need. CI reads
-# these two pins from here, so tests and the image run the same build.
+# Caddy, the caddy-ratelimit plugin that per-rule rate limits need, and the
+# Cloudflare DNS provider for DNS-01 challenges. CI reads these pins from here,
+# so tests and the image run the same build.
 ARG CADDY_VERSION=2.11.7
 ARG CADDY_RATELIMIT=5625512f24f6f59d6f64fb3aafe5eecff0b286db
+ARG CADDY_CLOUDFLARE=v0.2.4
 
 FROM caddy:${CADDY_VERSION}-builder AS caddy
 ARG CADDY_VERSION
 ARG CADDY_RATELIMIT
-RUN xcaddy build v${CADDY_VERSION} --with github.com/mholt/caddy-ratelimit@${CADDY_RATELIMIT} --output /usr/bin/caddy
+ARG CADDY_CLOUDFLARE
+RUN xcaddy build v${CADDY_VERSION} \
+    --with github.com/mholt/caddy-ratelimit@${CADDY_RATELIMIT} \
+    --with github.com/caddy-dns/cloudflare@${CADDY_CLOUDFLARE} \
+    --output /usr/bin/caddy
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src

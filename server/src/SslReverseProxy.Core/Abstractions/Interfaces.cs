@@ -32,14 +32,14 @@ public interface IProxyController
     Task<ProxyStatus> StartAsync(CancellationToken ct = default);
     Task<ProxyStatus> StopAsync(CancellationToken ct = default);
 
-    /// <summary>Regenerate and push proxy config from the current rule set.</summary>
-    Task<ProxyStatus> ApplyConfigurationAsync(IReadOnlyCollection<ProxyRule> rules, CancellationToken ct = default);
+    /// <summary>Regenerate and push proxy config from the current rules and certificates.</summary>
+    Task<ProxyStatus> ApplyConfigurationAsync(ProxyPlan plan, CancellationToken ct = default);
 
-    /// <summary>Generate the proxy config JSON for a rule set without applying it (preview).</summary>
-    string BuildConfigJson(IReadOnlyCollection<ProxyRule> rules);
+    /// <summary>Generate the proxy config JSON without applying it (preview).</summary>
+    string BuildConfigJson(ProxyPlan plan);
 
-    /// <summary>Validate a rule set (structural checks always; engine validation when available).</summary>
-    Task<ProxyValidationResult> ValidateConfigurationAsync(IReadOnlyCollection<ProxyRule> rules, CancellationToken ct = default);
+    /// <summary>Validate a plan (structural checks always; engine validation when available).</summary>
+    Task<ProxyValidationResult> ValidateConfigurationAsync(ProxyPlan plan, CancellationToken ct = default);
 
     /// <summary>Push a previously captured config JSON verbatim (used for rollback).</summary>
     Task<ProxyStatus> ApplyRawConfigAsync(string configJson, CancellationToken ct = default);
@@ -49,6 +49,16 @@ public interface IProxyController
 
     /// <summary>Record the proxy's traffic counters for the dashboard; does nothing while it is stopped.</summary>
     Task CaptureTrafficAsync(CancellationToken ct = default);
+}
+
+/// <summary>The background certificate monitor.</summary>
+public interface ICertificateChecks
+{
+    /// <summary>False when Proxy:CertificateCheckSeconds is 0. A forced renewal needs the monitor to end it.</summary>
+    bool Enabled { get; }
+
+    /// <summary>Runs a check cycle now instead of at the next interval.</summary>
+    void RequestCheck();
 }
 
 public sealed record UpstreamHealth(bool Reachable, int? StatusCode, long? LatencyMs, string? Error);

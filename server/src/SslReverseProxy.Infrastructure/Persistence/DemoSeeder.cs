@@ -32,8 +32,8 @@ public static class DemoSeeder
                 Rule("files.example.com", $"{up}/files", enabled: false)));
 
         db.Certificates.AddRange(
-            Cert("app.example.com", CertificateStatus.Valid, now, daysLeft: 60),
-            Cert("docs.example.com", CertificateStatus.Valid, now, daysLeft: 60),
+            Cert("app.example.com", CertificateStatus.Valid, now, daysLeft: 60, CertificateSource.Rule),
+            Cert("docs.example.com", CertificateStatus.Valid, now, daysLeft: 60, CertificateSource.Rule),
             Cert("api.example.com", CertificateStatus.Valid, now, daysLeft: 86),
             Cert("portal.example.com", CertificateStatus.Expiring, now, daysLeft: 19));
 
@@ -56,9 +56,12 @@ public static class DemoSeeder
     private static ProxyRule Rule(string domain, string upstream, bool enableTls = true, bool enabled = true) =>
         new() { Domain = domain, UpstreamUrl = upstream, EnableTls = enableTls, Enabled = enabled };
 
-    private static Certificate Cert(string domain, CertificateStatus status, DateTimeOffset now, int daysLeft) => new()
+    private static Certificate Cert(
+        string domain, CertificateStatus status, DateTimeOffset now, int daysLeft,
+        CertificateSource source = CertificateSource.Manual) => new()
     {
         Domain = domain,
+        Source = source,
         Issuer = "Let's Encrypt",
         Status = status,
         IssuedAt = now.AddDays(daysLeft - 90),

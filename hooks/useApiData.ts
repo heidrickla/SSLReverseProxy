@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Server, ServerStatus, Certificate, User, UserRole, LogEntry, CertificateStatus } from '../types';
-import { api, Server as ApiServer, Rule as ApiRule } from '../services/apiClient';
+import { api, ChallengeName, Server as ApiServer, Rule as ApiRule, ApiCertificate } from '../services/apiClient';
 
 // --- adapters: backend DTO <-> frontend view shapes ---
 
+const certStatuses: CertificateStatus[] = ['valid', 'expiring', 'expired', 'issuing', 'failed', 'unknown'];
 const mapCertStatus = (s: string): CertificateStatus => {
-    switch (s) {
-        case 'Valid': return 'valid';
-        case 'Expiring': return 'expiring';
-        case 'Issuing': return 'issuing';
-        default: return 'expired';
-    }
+    const status = s.toLowerCase() as CertificateStatus;
+    return certStatuses.includes(status) ? status : 'unknown';
 };
+
+const toCertificate = (c: ApiCertificate): Certificate => ({
+    id: c.id, domain: c.domain, issuer: c.issuer,
+    status: mapCertStatus(c.status), daysRemaining: c.daysRemaining,
+    issuedAt: c.issuedAt, expiresAt: c.expiresAt, serialNumber: c.serialNumber, algorithm: c.algorithm,
+    source: c.source === 'Rule' ? 'rule' : 'manual', challenge: c.challenge,
+    lastError: c.lastError, checkedAt: c.checkedAt, renewPending: c.renewPending,
+});
 
 const serverStatus = (s: ApiServer): Pick<Server, 'status' | 'upstreamsUp' | 'upstreamsTotal' | 'statusCheckedAt'> => ({
     status: (['active', 'inactive', 'error'].includes(s.status?.toLowerCase()) ? s.status.toLowerCase() : 'unknown') as ServerStatus,
@@ -61,12 +66,7 @@ const useApiData = (enabled: boolean) => {
             );
             setServers(withRules);
 
-            setCertificates(certs.map(c => ({
-                id: c.id, domain: c.domain, issuer: c.issuer,
-                status: mapCertStatus(c.status),
-                issuedAt: '', expiresAt: c.expiresAt ?? '',
-                serialNumber: '', algorithm: '',
-            })));
+            setCertificates(certs.map(toCertificate));
 
             setUsers(whoUsers.map(u => ({
                 id: u.id, name: u.name, email: u.email,
@@ -99,22 +99,35 @@ const useApiData = (enabled: boolean) => {
         } catch { /* the next event or reload tries again */ }
     }, []);
 
-    // The control plane publishes server.health when a server's status changes.
-    // Statuses are refetched on open too, covering changes made before the stream connected.
+    const refreshCertificates = useCallback(async () => {
+        try {
+            setCertificates((await api.certificates.list()).map(toCertificate));
+        } catch { /* the next event or reload tries again */ }
+    }, []);
+
+    // The control plane publishes server.health when a server's status changes, and certificate.*
+    // when a certificate's status changes or a forced renewal ends.
+    // Both are refetched on open too, covering changes made before the stream connected.
     useEffect(() => {
         if (!enabled) return;
         const abort = new AbortController();
         let debounce: ReturnType<typeof setTimeout> | undefined;
+        let certDebounce: ReturnType<typeof setTimeout> | undefined;
         let retry: ReturnType<typeof setTimeout> | undefined;
         const schedule = () => { clearTimeout(debounce); debounce = setTimeout(refreshStatuses, 250); };
+        const scheduleCerts = () => { clearTimeout(certDebounce); certDebounce = setTimeout(refreshCertificates, 250); };
+        const onOpen = () => { schedule(); scheduleCerts(); };
         const connect = () => {
-            api.events(evt => { if (evt?.type === 'server.health') schedule(); }, abort.signal, schedule)
+            api.events(evt => {
+                if (evt?.type === 'server.health') schedule();
+                else if (typeof evt?.type === 'string' && evt.type.startsWith('certificate.')) scheduleCerts();
+            }, abort.signal, onOpen)
                 .catch(() => { /* aborted or dropped */ })
                 .finally(() => { if (!abort.signal.aborted) retry = setTimeout(connect, 5000); });
         };
         connect();
-        return () => { abort.abort(); clearTimeout(debounce); clearTimeout(retry); };
-    }, [enabled, refreshStatuses]);
+        return () => { abort.abort(); clearTimeout(debounce); clearTimeout(certDebounce); clearTimeout(retry); };
+    }, [enabled, refreshStatuses, refreshCertificates]);
 
     const addServer = useCallback(async (d: { name: string; ip: string; os: 'linux' | 'windows' }) => {
         await api.servers.create({ name: d.name, host: d.ip, os: d.os });
@@ -130,13 +143,23 @@ const useApiData = (enabled: boolean) => {
     // the rule endpoints (see ServerDetailPane), then a reload refreshes state.
     const updateServer = useCallback(async (_s: Server) => { await reload(); }, [reload]);
 
-    const addCertificate = useCallback(async (d: { domain: string }) => {
-        await api.certificates.create({ domain: d.domain });
+    const addCertificate = useCallback(async (d: { domain: string; challenge: ChallengeName }) => {
+        await api.certificates.create(d);
         await reload();
     }, [reload]);
 
     const deleteCertificate = useCallback(async (id: string) => {
         await api.certificates.remove(id);
+        await reload();
+    }, [reload]);
+
+    const renewCertificate = useCallback(async (id: string) => {
+        await api.certificates.renew(id);
+        await reload();
+    }, [reload]);
+
+    const setCertificateChallenge = useCallback(async (id: string, challenge: ChallengeName) => {
+        await api.certificates.setChallenge(id, challenge);
         await reload();
     }, [reload]);
 
@@ -148,7 +171,7 @@ const useApiData = (enabled: boolean) => {
     return {
         servers, certificates, users, auditLogs, error, reload,
         addServer, updateServer, deleteServer,
-        addCertificate, deleteCertificate, addUser,
+        addCertificate, deleteCertificate, renewCertificate, setCertificateChallenge, addUser,
     };
 };
 

@@ -15,7 +15,8 @@ vi.mock('../hooks/useApiData', () => ({
   default: () => ({
     servers: [], certificates: [], users: [], auditLogs: [], error: null, reload: vi.fn(),
     addServer: vi.fn(), updateServer: vi.fn(), deleteServer: vi.fn(),
-    addCertificate: vi.fn(), deleteCertificate: vi.fn(), addUser: vi.fn(),
+    addCertificate: vi.fn(), deleteCertificate: vi.fn(), renewCertificate: vi.fn(), setCertificateChallenge: vi.fn(),
+    addUser: vi.fn(),
   }),
 }));
 

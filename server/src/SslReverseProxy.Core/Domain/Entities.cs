@@ -223,9 +223,14 @@ public class ConfigSnapshot
     public string? Note { get; set; }
 }
 
+/// <summary>
+/// A name Caddy holds a certificate for. Dates, serial, issuer and algorithm describe the
+/// certificate Caddy last served for the name, read by <c>CertificateMonitor</c>.
+/// </summary>
 public class Certificate
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    /// <summary>Lower case; <c>*.example.com</c> for a wildcard.</summary>
     public string Domain { get; set; } = string.Empty;
     public string Issuer { get; set; } = string.Empty;
     public CertificateStatus Status { get; set; } = CertificateStatus.Unknown;
@@ -234,6 +239,15 @@ public class Certificate
     public string? SerialNumber { get; set; }
     public string? Algorithm { get; set; }
     public bool Managed { get; set; } = true; // issued/renewed automatically by the proxy (ACME)
+    public CertificateSource Source { get; set; } = CertificateSource.Manual;
+    public CertificateChallenge Challenge { get; set; } = CertificateChallenge.Http;
+    /// <summary>Caddy's last obtain or renew error for the name, redacted and truncated.</summary>
+    public string? LastError { get; set; }
+    public DateTimeOffset? CheckedAt { get; set; }
+    /// <summary>When a forced renewal was last requested; the next waits <c>Proxy:RenewMinimumAgeMinutes</c> after it.</summary>
+    public DateTimeOffset? RenewRequestedAt { get; set; }
+    /// <summary>Set while a forced renewal waits for a certificate with another serial than this one.</summary>
+    public string? RenewFromSerial { get; set; }
 }
 
 /// <summary>Append-only audit record. Rows are never updated or deleted.</summary>

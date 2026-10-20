@@ -153,10 +153,11 @@ public class RulePlaceholderTests
     {
         using var c = new CaddyProxyController(
             Options.Create(new ProxyOptions { CaddyPath = Path.Combine(Path.GetTempPath(), $"no-caddy-{Guid.NewGuid():N}.exe") }),
-            new NoHttp(), NullLogger<CaddyProxyController>.Instance, TimeProvider.System, new TrafficRecorder(), SecretRedactor.None);
+            new NoHttp(), NullLogger<CaddyProxyController>.Instance, TimeProvider.System, new TrafficRecorder(), SecretRedactor.None,
+        new CaddyCertificateLog(SecretRedactor.None, TimeProvider.System));
         var rule = new ProxyRule { Domain = "a.example.com", UpstreamUrl = "http://10.0.0.5", Enabled = true, HealthCheckPath = "/{env.HOME}" };
 
-        var result = await c.ValidateConfigurationAsync([rule]);
+        var result = await c.ValidateConfigurationAsync(new ProxyPlan([rule]));
 
         Assert.False(result.Valid);
         Assert.Contains(result.Issues, i => i.Contains("HealthCheckPath"));
@@ -167,7 +168,8 @@ public class RulePlaceholderTests
     {
         using var c = new CaddyProxyController(
             Options.Create(new ProxyOptions()), new NoHttp(), NullLogger<CaddyProxyController>.Instance,
-            TimeProvider.System, new TrafficRecorder(), new SecretRedactor(["cf-token-value-1234"]));
+            TimeProvider.System, new TrafficRecorder(), new SecretRedactor(["cf-token-value-1234"]),
+            new CaddyCertificateLog(SecretRedactor.None, TimeProvider.System));
 
         var status = await c.ApplyRawConfigAsync("{\"apps\":{\"x\":\"cf-token-value-1234\"}}");
 

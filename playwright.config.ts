@@ -36,11 +36,16 @@ export default defineConfig({
       env: {
         ConnectionStrings__AppDb: `Data Source=${e2eDatabase}`,
         Seed__Demo: 'true',
+        // Every spec's requests come from loopback, so the run shares one client's allowance.
+        Security__RequestsPerMinute: '1000',
         ...(caddyPath ? { Proxy__CaddyPath: caddyPath } : {}),
         Proxy__HttpPort: String(proxyHttpPort),
         Proxy__HttpsPort: String(proxyHttpsPort),
         Proxy__CertificateIssuer: 'internal',
         Proxy__TrafficSampleSeconds: '2',
+        Proxy__CertificateCheckSeconds: '2',
+        Proxy__RenewCheckSeconds: '2',
+        Proxy__RenewMinimumAgeMinutes: '0',
         Proxy__ConfigDirectory: path.join(proxyDir, 'config'),
         XDG_DATA_HOME: path.join(proxyDir, 'data'),
       },
