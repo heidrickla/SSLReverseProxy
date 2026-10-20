@@ -1,6 +1,6 @@
 # SSLReverseProxy
 
-A control plane for a [Caddy](https://caddyserver.com) reverse proxy: a React admin dashboard over an ASP.NET Core (.NET 10) service that starts, stops and configures the proxy, its servers, host and path routes, and ACME certificates. It reads the certificate Caddy serves for each name, forces renewals, obtains wildcards over Cloudflare DNS-01 with a server-held token, and sends server and certificate alerts to a webhook (such as Home Assistant's) or ntfy. The API authenticates with hashed API keys or mutual TLS, enforces deny-by-default role-based access on every action, re-validates every upstream server-side against SSRF, supports per-route IP allow and deny lists, and keeps an append-only audit trail with config snapshots and one-call rollback.
+A control plane for a [Caddy](https://caddyserver.com) reverse proxy: a React admin dashboard over an ASP.NET Core (.NET 10) service that starts, stops and configures the proxy, its servers, host and path routes, and ACME certificates. It reads the certificate Caddy serves for each name, forces renewals, obtains wildcards over Cloudflare DNS-01 with a server-held token, and sends server and certificate alerts to a webhook (such as Home Assistant's) or ntfy. The API authenticates with passkeys (cookie sessions with CSRF tokens), hashed API keys or mutual TLS, enforces deny-by-default role-based access on every action, re-validates every upstream server-side against SSRF, supports per-route IP allow and deny lists, and keeps an append-only audit trail with config snapshots and one-call rollback.
 
 ## Layout
 
@@ -41,7 +41,7 @@ Frontend (Bun 1.4, Node.js 22.12 or later):
 | `bun run e2e` | Playwright tests (below). |
 | `bun run screenshots` | Retakes `docs/screenshots` from the demo data, with proxy traffic when `SSLRP_TEST_CADDY` is set. |
 
-`bun run e2e` starts the control plane with demo data on a new database, builds and previews the UI, and checks every view in both themes, server statuses and live status updates. With `SSLRP_TEST_CADDY` naming a Caddy built with the plugins in [server/README.md](server/README.md#caddy), it also starts the proxy, checks plaintext and TLS hosts and a stripped path route on its HTTP port, checks the dashboard shows the traffic it served, reads certificates from Caddy and renews a wildcard through the UI. A local listener checks the Settings test alert. It needs the .NET 10 SDK and free ports 5195, 4173 and 8790, plus 8780, 8743 and 2019 for Caddy. Install the browser once with `bunx playwright install chromium`.
+`bun run e2e` starts the control plane with demo data on a new database, builds and previews the UI, and checks every view in both themes, server statuses and live status updates. With `SSLRP_TEST_CADDY` naming a Caddy built with the plugins in [server/README.md](server/README.md#caddy), it also starts the proxy, checks plaintext and TLS hosts and a stripped path route on its HTTP port, checks the dashboard shows the traffic it served, reads certificates from Caddy and renews a wildcard through the UI. A local listener checks the Settings test alert, and a virtual authenticator registers a passkey and signs in with it. It needs the .NET 10 SDK and free ports 5195, 4173 and 8790, plus 8780, 8743 and 2019 for Caddy. Install the browser once with `bunx playwright install chromium`.
 
 Backend (.NET 10 SDK):
 

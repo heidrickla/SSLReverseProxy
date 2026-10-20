@@ -9,6 +9,8 @@ public class AppDbContext : DbContext
 
     public DbSet<User> Users => Set<User>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    public DbSet<PasskeyCredential> Passkeys => Set<PasskeyCredential>();
+    public DbSet<UserSession> Sessions => Set<UserSession>();
     public DbSet<ProxyServer> Servers => Set<ProxyServer>();
     public DbSet<ProxyRule> Rules => Set<ProxyRule>();
     public DbSet<Certificate> Certificates => Set<Certificate>();
@@ -32,6 +34,26 @@ public class AppDbContext : DbContext
             e.Property(k => k.Name).HasMaxLength(200).IsRequired();
             e.HasOne(k => k.User).WithMany(u => u.ApiKeys)
                 .HasForeignKey(k => k.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<PasskeyCredential>(e =>
+        {
+            // WebAuthn allows credential ids up to 1023 bytes.
+            e.Property(p => p.CredentialId).HasMaxLength(1023).IsRequired();
+            e.HasIndex(p => p.CredentialId).IsUnique();
+            e.Property(p => p.PublicKey).HasMaxLength(2048).IsRequired();
+            e.Property(p => p.Name).HasMaxLength(100).IsRequired();
+            e.HasOne(p => p.User).WithMany(u => u.Passkeys)
+                .HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<UserSession>(e =>
+        {
+            e.Property(s => s.SecretHash).HasMaxLength(32).IsRequired();
+            e.HasOne(s => s.User).WithMany()
+                .HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<PasskeyCredential>().WithMany()
+                .HasForeignKey(s => s.PasskeyId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<ProxyServer>(e =>

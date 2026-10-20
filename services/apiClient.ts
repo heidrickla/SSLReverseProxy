@@ -1,11 +1,12 @@
+import type { CreationOptionsJson, RequestOptionsJson } from '../utils/webauthn';
+
 // Typed client for the C# control-plane API (server/).
 //
-// AUTH: the backend authenticates with an API key (or mTLS). The key is sent in
-// the `X-Api-Key` header. We keep it in sessionStorage (cleared when the tab
-// closes) rather than localStorage to shrink the exposure window — but note that
-// ANY value the browser can read is reachable by an XSS payload. For production,
-// prefer terminating mTLS / injecting the key at an authenticating gateway so the
-// SPA never holds a long-lived credential. See server/README.md.
+// AUTH: an API key in the `X-Api-Key` header, or a passkey session. The key is
+// kept in sessionStorage (cleared when the tab closes); any value the browser can
+// read is reachable by an XSS payload. A passkey session is an HttpOnly cookie the
+// page cannot read, sent only to the page's own origin; unsafe requests on it
+// carry the session's CSRF token, held in memory. See server/README.md.
 
 // Empty means the page's own origin, with /api routed to the control plane by the edge (or Vite's proxy).
 const API_BASE: string = (import.meta as any).env?.VITE_API_BASE_URL ?? '';
@@ -16,6 +17,26 @@ export const apiKeyStore = {
   set: (key: string) => sessionStorage.setItem(KEY_STORAGE, key),
   clear: () => sessionStorage.removeItem(KEY_STORAGE),
 };
+
+/** Passkey sessions ride on a cookie the browser sends only to the page's own origin. */
+export const sessionsAvailable = (base: string = API_BASE): boolean => {
+  if (!base) return true;
+  try {
+    return new URL(base, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+};
+
+// The CSRF token of the passkey session, held in memory only. A reload recovers it from /api/auth/session.
+let csrfToken: string | null = null;
+export const csrfStore = {
+  get: (): string | null => csrfToken,
+  set: (token: string) => { csrfToken = token; },
+  clear: () => { csrfToken = null; },
+};
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public problem?: unknown) {
@@ -32,13 +53,14 @@ async function request<T>(
   const key = apiKeyStore.get();
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...extraHeaders };
   if (key) headers['X-Api-Key'] = key;
+  else if (csrfToken && !SAFE_METHODS.has(method)) headers['X-CSRF-Token'] = csrfToken;
 
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-    // Do not attach ambient cookies; auth is via the explicit API-key header.
-    credentials: 'omit',
+    // With an API key the session cookie stays home: the server refuses a request carrying both.
+    credentials: key ? 'omit' : 'same-origin',
   });
 
   if (res.status === 204) return undefined as T;
@@ -122,6 +144,11 @@ export interface RuleInput {
   routing?: RuleRouting | null;
 }
 export interface WhoAmI { userId: string | null; name: string; role: string; permissions: string[]; }
+/** A WebAuthn ceremony: `options` go to the browser, `handle` comes back with its answer. */
+export interface PasskeyCeremony<T> { handle: string; options: T; }
+export interface PasskeySignIn { csrfToken: string; expiresAt: string; user: WhoAmI; }
+export interface PasskeySession { csrfToken: string; expiresAt: string; }
+export interface Passkey { id: string; name: string; createdAt: string; lastUsedAt: string | null; backedUp: boolean; }
 export interface ProxyValidation { valid: boolean; issues: string[]; engineValidated: boolean; }
 export interface Metrics { collectedAt: string; available: boolean; totalRequests: number; requestsInFlight: number; series: Record<string, number>; message: string | null; }
 /** GET /api/proxy/traffic: the last 24 hours of stored samples. Nulls mean no data for that figure. */
@@ -232,6 +259,24 @@ export const api = {
     test: (target: string) => request<AlertDelivery[]>('POST', '/api/alerts/test', { target }),
   },
 
+  auth: {
+    methods: () => request<{ passkeys: boolean }>('GET', '/api/auth/methods'),
+    passkeyOptions: () => request<PasskeyCeremony<RequestOptionsJson>>('POST', '/api/auth/passkey/options'),
+    passkeySignIn: (handle: string, response: unknown) =>
+      request<PasskeySignIn>('POST', '/api/auth/passkey', { handle, response }),
+    session: () => request<PasskeySession>('GET', '/api/auth/session'),
+    logout: () => request<void>('POST', '/api/auth/logout'),
+  },
+
+  // The signed-in user's own passkeys.
+  passkeys: {
+    list: () => request<Passkey[]>('GET', '/api/passkeys'),
+    options: () => request<PasskeyCeremony<CreationOptionsJson>>('POST', '/api/passkeys/options'),
+    register: (handle: string, name: string, response: unknown) =>
+      request<Passkey>('POST', '/api/passkeys', { handle, name, response }),
+    remove: (id: string) => request<void>('DELETE', `/api/passkeys/${id}`),
+  },
+
   users: {
     list: () => request<ApiUser[]>('GET', '/api/users'),
     create: (u: { name: string; email: string; role: string }) => request<ApiUser>('POST', '/api/users', u),
@@ -256,7 +301,7 @@ async function streamEvents(onEvent: (evt: ControlEvent) => void, signal?: Abort
   const key = apiKeyStore.get();
   const res = await fetch(`${API_BASE}/api/events`, {
     headers: key ? { 'X-Api-Key': key } : {},
-    credentials: 'omit',
+    credentials: key ? 'omit' : 'same-origin',
     signal,
   });
   if (!res.ok || !res.body) return;

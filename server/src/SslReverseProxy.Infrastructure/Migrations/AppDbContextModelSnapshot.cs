@@ -216,6 +216,58 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.ToTable("ConfigSnapshots");
                 });
 
+            modelBuilder.Entity("SslReverseProxy.Core.Domain.PasskeyCredential", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AaGuid")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("BackedUp")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("BackupEligible")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("CredentialId")
+                        .IsRequired()
+                        .HasMaxLength(1023)
+                        .HasColumnType("BLOB");
+
+                    b.Property<DateTimeOffset?>("LastUsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("PublicKey")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("BLOB");
+
+                    b.Property<uint>("SignCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CredentialId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("Passkeys");
+                });
+
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ProxyRule", b =>
                 {
                     b.Property<Guid>("Id")
@@ -464,10 +516,59 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("SslReverseProxy.Core.Domain.UserSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PasskeyId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte[]>("SecretHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("BLOB");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PasskeyId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("Sessions");
+                });
+
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ApiKey", b =>
                 {
                     b.HasOne("SslReverseProxy.Core.Domain.User", "User")
                         .WithMany("ApiKeys")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("SslReverseProxy.Core.Domain.PasskeyCredential", b =>
+                {
+                    b.HasOne("SslReverseProxy.Core.Domain.User", "User")
+                        .WithMany("Passkeys")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -486,6 +587,23 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.Navigation("Server");
                 });
 
+            modelBuilder.Entity("SslReverseProxy.Core.Domain.UserSession", b =>
+                {
+                    b.HasOne("SslReverseProxy.Core.Domain.PasskeyCredential", null)
+                        .WithMany()
+                        .HasForeignKey("PasskeyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SslReverseProxy.Core.Domain.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("SslReverseProxy.Core.Domain.ProxyServer", b =>
                 {
                     b.Navigation("Rules");
@@ -494,6 +612,8 @@ namespace SslReverseProxy.Infrastructure.Migrations
             modelBuilder.Entity("SslReverseProxy.Core.Domain.User", b =>
                 {
                     b.Navigation("ApiKeys");
+
+                    b.Navigation("Passkeys");
                 });
 #pragma warning restore 612, 618
         }

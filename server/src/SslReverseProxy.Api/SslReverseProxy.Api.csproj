@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Fido2" Version="4.3.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
     <!-- Override vulnerable transitive Microsoft.OpenApi 2.0.0 with a patched 2.x release. -->
     <PackageReference Include="Microsoft.OpenApi" Version="2.9.0" />

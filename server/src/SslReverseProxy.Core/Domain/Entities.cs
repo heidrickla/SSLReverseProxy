@@ -11,6 +11,44 @@ public class User
     public DateTimeOffset? LastSeenAt { get; set; }
 
     public List<ApiKey> ApiKeys { get; set; } = new();
+    public List<PasskeyCredential> Passkeys { get; set; } = new();
+}
+
+/// <summary>A WebAuthn credential registered by a user. The private key never leaves the authenticator.</summary>
+public class PasskeyCredential
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public User? User { get; set; }
+    public byte[] CredentialId { get; set; } = [];
+    /// <summary>COSE-encoded public key.</summary>
+    public byte[] PublicKey { get; set; } = [];
+    public uint SignCount { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public Guid AaGuid { get; set; }
+    public bool BackupEligible { get; set; }
+    public bool BackedUp { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? LastUsedAt { get; set; }
+}
+
+/// <summary>
+/// A browser session started by a passkey sign-in. Only a SHA-256 hash of the secret is stored. The session
+/// ends at <see cref="ExpiresAt"/>, on sign-out, when its passkey is deleted, or when the user is
+/// deactivated or changes role.
+/// </summary>
+public class UserSession
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public User? User { get; set; }
+    public Guid PasskeyId { get; set; }
+    public byte[] SecretHash { get; set; } = [];
+    /// <summary>The user's role when the session started; any change ends the session.</summary>
+    public Role Role { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
 }
 
 /// <summary>

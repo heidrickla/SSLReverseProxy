@@ -123,6 +123,11 @@ public sealed record ChallengeDto(string Name, bool Available, bool Wildcard, st
 public sealed record AlertTargetDto(string Name, string Kind, IReadOnlyList<string> Events, string? Problem);
 public sealed record AlertsDto(IReadOnlyList<AlertTargetDto> Targets, IReadOnlyList<string> Events);
 public sealed record AlertTestRequest(string? Target);
+public sealed record AuthMethodsDto(bool Passkeys);
+/// <summary>A passkey sign-in: the CSRF token to send as X-CSRF-Token on unsafe requests, and who signed in.</summary>
+public sealed record PasskeySignInDto(string CsrfToken, DateTimeOffset ExpiresAt, WhoAmIDto User);
+public sealed record SessionDto(string CsrfToken, DateTimeOffset ExpiresAt);
+public sealed record PasskeyDto(Guid Id, string Name, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt, bool BackedUp);
 public sealed record AlertDeliveryDto(string Target, bool Delivered, int? Status, string? Error, int Attempts);
 public sealed record UserDto(Guid Id, string Name, string Email, string Role, bool IsActive, DateTimeOffset? LastSeenAt);
 public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt);

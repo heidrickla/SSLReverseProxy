@@ -19,12 +19,13 @@ The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a
 
 | Concern | Control |
 | --- | --- |
-| Authentication | API key in `X-Api-Key` or `Authorization: Bearer`. Optional mutual TLS pinned to allow-listed client-certificate thumbprints. |
+| Authentication | API key in `X-Api-Key` or `Authorization: Bearer`, or a passkey session. Optional mutual TLS pinned to allow-listed client-certificate thumbprints. A request carrying both an API key and a session cookie is refused. |
+| Passkey sessions | WebAuthn ([fido2-net-lib](https://github.com/passwordless-lib/fido2-net-lib)) with discoverable credentials and user verification required. Sign-in sets an HttpOnly, Secure, SameSite=Strict `__Host-sslrp-session` cookie; the database holds the secret's SHA-256 only. Every request rechecks the session: unexpired, not revoked, the user active and in the role the session started with. Sign-out, a role change, deactivation or removing the passkey ends it. Unsafe methods need an `Origin` listed in `Passkeys:Origins` and the session's CSRF token (an HMAC of the secret) in `X-CSRF-Token`. |
 | API-key storage | PBKDF2-SHA256 hash, per-key salt and server pepper only. Plaintext shown once at creation. Constant-time verification. |
 | Authorization | Deny-by-default. Every endpoint requires a permission; roles map to permissions server-side (`Core/Security/Permissions.cs`). |
 | SSRF | Every upstream is validated server-side (`ProxyTargetValidator`): http(s) only, cloud-metadata and link-local blocked, private and loopback gated by policy. |
 | Transport | HSTS and HTTPS redirect in Production; security headers and a JSON-only CSP on every response. |
-| Abuse | Per-IP fixed-window rate limit, `Security:RequestsPerMinute` (100). |
+| Abuse | Per-IP fixed-window rate limit, `Security:RequestsPerMinute` (100). Anonymous passkey ceremonies have their own per-IP limits; at most 1000 are pending, each for 2 minutes. |
 | Audit | Append-only log of every control and mutation action (actor, action, target, source IP). |
 | Secrets | Pepper, Cloudflare token, alert target URLs and tokens, client-certificate thumbprints and ACME email from configuration, user-secrets or environment. The Cloudflare token stays on the server: the UI asks only which validation methods are available. Configured secret values are masked in Caddy's forwarded output, `/load` errors and validation issues, and a rollback config holding one is refused. Alert URLs and tokens are never returned by the API or logged. |
 | Caddy process | Started with a fixed environment: system paths, its data and config directories, outbound proxy and trust-store variables, and the Cloudflare token when set. Rule text may not contain `{` or `}`, which Caddy reads as placeholders. |
@@ -59,6 +60,11 @@ The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a
 | `Proxy:AccessLogPath`, `AccessLogRollSizeMb`, `AccessLogKeepDays` | Data-plane access log as JSON lines. Off by default: records carry client IPs and URLs. |
 | `Alerts:Targets` | Where alerts go: each has `Name`, `Kind` (`webhook` or `ntfy`), `Url`, optional `Token` and `Events` (empty sends every type). URL and token are secrets; set them through the environment (`Alerts__Targets__0__Url`). A target that fails validation is listed with the reason and not sent to. |
 | `Alerts:ServerDownChecks` | Consecutive `Error` readings before a server alerts as down (2). |
+| `Passkeys:RelyingPartyId` | The host the UI is served from, such as `proxy.example.com`. Empty turns passkey sign-in off. |
+| `Passkeys:Origins` | Exact origins the UI is served from, such as `https://proxy.example.com`. Passkey answers must come from one, and unsafe requests on a session need an `Origin` in the list. Blank entries are ignored. |
+| `Passkeys:RelyingPartyName` | Name the browser shows (`SSLReverseProxy`). |
+| `Passkeys:SessionHours` | Session lifetime (12; 1 to 168). |
+| `Passkeys:OptionsPerMinute` (10), `Passkeys:SignInsPerMinute` (5) | Anonymous sign-in ceremonies and sign-in attempts one client IP may start per minute. |
 | `Seed:Demo` | Development only: fills a new database with demo servers, rules, certificates, users and audit entries. Upstreams point at `Seed:DemoUpstreamBase` (default `http://127.0.0.1:5195`, this API under the `http` launch profile) and the discard port, so the three servers come up `Active`, `Error` and `Inactive`. Ignored with a warning elsewhere. |
 
 Secrets locally:
@@ -97,7 +103,7 @@ Caddy 2.7 or later: the IP lists emit the `client_ip` matcher. Rate-limited rule
 
 ## Endpoints
 
-All require authentication except `/api/health`, `/api/ready` and `/api/bootstrap-key`.
+All require authentication except `/api/health`, `/api/ready`, `/api/bootstrap-key` and the passkey sign-in endpoints marked anonymous.
 
 Meta
 
@@ -105,6 +111,22 @@ Meta
 - `GET /api/bootstrap-key`: one-time first-run key claim (Development and loopback only; 404 otherwise).
 - `GET /api/whoami`: current principal and permissions.
 - `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes, `certificate.status` when a certificate's does, and `certificate.renewed` or `certificate.renew_failed` when a forced renewal ends. Headers go out once the subscriber is registered, so no event published after the client has them is missed.
+
+Passkeys
+
+Off until `Passkeys:RelyingPartyId` and `Passkeys:Origins` are set. A ceremony's options come with a `handle` that its answer sends back; a handle works once, within 2 minutes, for the ceremony and user it was issued to.
+
+| Endpoint | |
+| --- | --- |
+| `GET /api/auth/methods` | Anonymous. `{passkeys}`: whether passkey sign-in is configured. |
+| `POST /api/auth/passkey/options` | Anonymous. `{handle, options}` for `navigator.credentials.get`. |
+| `POST /api/auth/passkey` | Anonymous. `{handle, response}` verifies the assertion, sets the session cookie and returns `{csrfToken, expiresAt, user}`. Any failure is 401, audited with its reason. |
+| `GET /api/auth/session` | The session's `{csrfToken, expiresAt}`, so a reloaded page recovers its token. 404 for an API key. |
+| `POST /api/auth/logout` | Anonymous. Revokes a live session and clears the cookie. |
+| `GET /api/passkeys` | The caller's passkeys: `id`, `name`, `createdAt`, `lastUsedAt`, `backedUp`. |
+| `POST /api/passkeys/options` | `{handle, options}` for `navigator.credentials.create`, excluding the caller's passkeys. 409 at 10 per user. |
+| `POST /api/passkeys` | `{handle, name, response}` registers the passkey to the caller. |
+| `DELETE /api/passkeys/{id}` | Removes one of the caller's passkeys and ends the sessions it started. |
 
 Control service
 
@@ -219,8 +241,8 @@ Users, keys, audit
 - Secrets: `Security__ApiKeyPepper` (random, base64) through the environment or user-secrets; Production logs a warning when it is unset. ACME email and client-certificate thumbprints the same way.
 - TLS: HSTS and HTTPS redirect are on in Production. Terminate TLS (or mTLS) for the control API at the edge, and put it behind an authenticating gateway or set `Security:RequireMutualTls`.
 - Behind a proxy: list it in `Security:TrustedProxies` (IP or CIDR) so the rate limiter and audit log see the client IP from `X-Forwarded-For`.
-- Containers: the [`Dockerfile`](Dockerfile) bundles the API with Caddy and its plugins; the API runs Caddy as a child process. The database, proxy config and Caddy's certificates live in `/data`, a volume in [`docker-compose.yml`](docker-compose.yml). Environment: `SSLRP_API_KEY_PEPPER`, optional `SSLRP_ACME_EMAIL`, `SSLRP_CLOUDFLARE_API_TOKEN` and `SSLRP_SPA_ORIGIN`. Alert targets go in the service's environment as `Alerts__Targets__<n>__<Key>`.
+- Containers: the [`Dockerfile`](Dockerfile) bundles the API with Caddy and its plugins; the API runs Caddy as a child process. The database, proxy config and Caddy's certificates live in `/data`, a volume in [`docker-compose.yml`](docker-compose.yml). Environment: `SSLRP_API_KEY_PEPPER`, optional `SSLRP_ACME_EMAIL`, `SSLRP_CLOUDFLARE_API_TOKEN`, `SSLRP_SPA_ORIGIN`, and `SSLRP_PASSKEY_RP_ID` with `SSLRP_PASSKEY_ORIGIN` for passkey sign-in. Alert targets go in the service's environment as `Alerts__Targets__<n>__<Key>`.
 
 ## Frontend
 
-The React app calls this API through [`services/apiClient.ts`](../services/apiClient.ts), on its own origin under `/api` by default: serve the UI and route `/api` here from the same edge. For a UI on another origin, build with `VITE_API_BASE_URL` set to the API origin (added to the CSP `connect-src`) and list the UI's origin in `Security:CorsAllowedOrigins` (`SSLRP_SPA_ORIGIN` in docker-compose). Framing protection goes on the server that serves the UI as a header (`Content-Security-Policy: frame-ancestors 'none'` or `X-Frame-Options: DENY`); a `<meta>` policy cannot carry it.
+The React app calls this API through [`services/apiClient.ts`](../services/apiClient.ts), on its own origin under `/api` by default: serve the UI and route `/api` here from the same edge. For a UI on another origin, build with `VITE_API_BASE_URL` set to the API origin (added to the CSP `connect-src`) and list the UI's origin in `Security:CorsAllowedOrigins` (`SSLRP_SPA_ORIGIN` in docker-compose). Passkey sessions need the same-origin layout: the browser sends the cookie only to the page's own origin, so a UI on another origin offers API keys only. Framing protection goes on the server that serves the UI as a header (`Content-Security-Policy: frame-ancestors 'none'` or `X-Frame-Options: DENY`); a `<meta>` policy cannot carry it.

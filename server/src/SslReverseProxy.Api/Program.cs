@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using Fido2NetLib;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
@@ -19,6 +20,10 @@ var builder = WebApplication.CreateBuilder(args);
 var securityOptions = builder.Configuration.GetSection(SecurityOptions.SectionName).Get<SecurityOptions>()
     ?? new SecurityOptions();
 builder.Services.AddSingleton(securityOptions);
+
+var passkeyOptions = builder.Configuration.GetSection(PasskeyOptions.SectionName).Get<PasskeyOptions>()
+    ?? new PasskeyOptions();
+builder.Services.Configure<PasskeyOptions>(builder.Configuration.GetSection(PasskeyOptions.SectionName));
 
 // Optional mutual TLS: ask Kestrel to request/require a client certificate.
 builder.WebHost.ConfigureKestrel(k =>
@@ -42,6 +47,14 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentPrincipal, CurrentPrincipal>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
+
+builder.Services.AddSingleton<PasskeyChallenges>();
+builder.Services.AddSingleton<IFido2>(_ => new Fido2(new Fido2Configuration
+{
+    RPID = passkeyOptions.RelyingPartyId?.Trim() ?? "localhost",
+    RPName = passkeyOptions.RelyingPartyName,
+    Origins = passkeyOptions.AllowedOrigins,
+}));
 
 builder.Services.AddSingleton<AlertDispatcher>();
 builder.Services.AddSingleton<IAlertSink>(sp => sp.GetRequiredService<AlertDispatcher>());
@@ -87,6 +100,17 @@ builder.Services.AddRateLimiter(options =>
             QueueLimit = 0,
         });
     });
+    options.AddPolicy(PasskeyEndpoints.OptionsLimit, ctx => PerIp(ctx, passkeyOptions.OptionsPerMinute));
+    options.AddPolicy(PasskeyEndpoints.SignInLimit, ctx => PerIp(ctx, passkeyOptions.SignInsPerMinute));
+
+    static RateLimitPartition<string> PerIp(HttpContext ctx, int perMinute) =>
+        RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = Math.Max(1, perMinute),
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
 });
 
 // Trust X-Forwarded-* only from configured proxies so the real client IP (used
@@ -140,6 +164,7 @@ app.UseMiddleware<ClientCertificateMiddleware>(); // enforces mTLS when enabled
 app.UseRateLimiter();
 app.UseCors();
 app.UseAuthentication();
+app.UseMiddleware<SessionCsrfMiddleware>();
 app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
@@ -150,6 +175,7 @@ app.MapServerEndpoints();
 app.MapAdminEndpoints();
 app.MapCertificateEndpoints();
 app.MapAlertEndpoints();
+app.MapPasskeyEndpoints();
 
 // Seed:Demo fills a new Development database with sample data, for screenshots and the browser smoke test.
 var seedDemo = app.Configuration.GetValue<bool>("Seed:Demo");

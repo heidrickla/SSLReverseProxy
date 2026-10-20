@@ -92,9 +92,12 @@ export interface ThemeContextType {
 export interface AuthContextType {
   currentUser: User | null;
   authReady: boolean;
+  /** The server offers passkey sign-in (Passkeys:RelyingPartyId is set). */
+  passkeysEnabled: boolean;
   users: User[];
   login: (apiKey: string) => Promise<void>;
-  logout: () => void;
+  loginWithPasskey: () => Promise<void>;
+  logout: () => Promise<void>;
   switchUser: () => void;
   updateUser: (updatedUser: User) => void;
   hasPermission: (permission: Permission) => boolean;

@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, Rea
 import { AuthContextType, User, UserRole } from '../types';
 import useApiData from '../hooks/useApiData';
 import { Permission, roleCan } from '../utils/permissions';
-import { api, apiKeyStore } from '../services/apiClient';
+import { api, apiKeyStore, csrfStore, sessionsAvailable } from '../services/apiClient';
+import { getPasskey } from '../utils/webauthn';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -24,6 +25,7 @@ const claimBootstrapKey = (): Promise<string> =>
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [authReady, setAuthReady] = useState(false);
+    const [passkeysEnabled, setPasskeysEnabled] = useState(false);
 
     // Resource data is fetched from the control-plane API once authenticated.
     const {
@@ -33,14 +35,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         auditLogs, reload
     } = useApiData(!!currentUser);
 
-    // Restore a session from a stored API key on load; with no stored key, try
-    // to claim the first-run bootstrap key (dev-only, loopback-only) so a fresh
-    // install signs in without copying the key from the server log. A cancelled
-    // run writes nothing: under StrictMode it shares the key with the live run.
+    // Restore a session on load: a stored API key, else a passkey session cookie;
+    // with neither, try to claim the first-run bootstrap key (dev-only,
+    // loopback-only) so a fresh install signs in without copying the key from the
+    // server log. A cancelled run writes nothing: under StrictMode it shares the
+    // key with the live run.
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            if (apiKeyStore.get()) {
+            const passkeys = sessionsAvailable() && await api.auth.methods().then(m => m.passkeys, () => false);
+            if (!cancelled) setPasskeysEnabled(passkeys);
+            const session = !apiKeyStore.get() && passkeys ? await api.auth.session().catch(() => null) : null;
+            if (session) {
+                if (!cancelled) csrfStore.set(session.csrfToken);
+                try {
+                    const who = await api.whoami();
+                    if (!cancelled) setCurrentUser(userFromWhoAmI(who));
+                } catch {
+                    if (!cancelled) csrfStore.clear();
+                }
+            } else if (apiKeyStore.get()) {
                 try {
                     const who = await api.whoami();
                     if (!cancelled) setCurrentUser(userFromWhoAmI(who));
@@ -80,6 +94,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // Authenticate with an API key: store it, then confirm it via /whoami.
     const login = useCallback(async (apiKey: string) => {
+        csrfStore.clear();
         apiKeyStore.set(apiKey.trim());
         try {
             const who = await api.whoami();
@@ -91,8 +106,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     }, []);
 
-    const logout = useCallback(() => {
+    // Sign in with a passkey: the browser answers the server's challenge and the
+    // server sets the session cookie.
+    const loginWithPasskey = useCallback(async () => {
+        const { handle, options } = await api.auth.passkeyOptions();
+        const response = await getPasskey(options);
         apiKeyStore.clear();
+        const result = await api.auth.passkeySignIn(handle, response);
+        csrfStore.set(result.csrfToken);
+        setCurrentUser(userFromWhoAmI(result.user));
+    }, []);
+
+    // A passkey session is revoked on the server; an API key is only forgotten here.
+    const logout = useCallback(async () => {
+        if (!apiKeyStore.get() && csrfStore.get()) {
+            try { await api.auth.logout(); } catch { /* the cookie expires on its own */ }
+        }
+        apiKeyStore.clear();
+        csrfStore.clear();
         setCurrentUser(null);
     }, []);
 
@@ -112,8 +143,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const value: AuthContextType = {
         currentUser,
         authReady,
+        passkeysEnabled,
         users,
         login,
+        loginWithPasskey,
         logout,
         switchUser,
         updateUser,

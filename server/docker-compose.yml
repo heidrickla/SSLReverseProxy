@@ -21,6 +21,9 @@ services:
       # DNS-01 through Cloudflare: a token with Zone:Read and DNS:Edit. Caddy reads it from its environment.
       Proxy__CloudflareApiToken: "${SSLRP_CLOUDFLARE_API_TOKEN:-}"
       Security__CorsAllowedOrigins__0: "${SSLRP_SPA_ORIGIN:-}"
+      # Passkey sign-in: the UI's host and origin, such as proxy.example.com and https://proxy.example.com.
+      Passkeys__RelyingPartyId: "${SSLRP_PASSKEY_RP_ID:-}"
+      Passkeys__Origins__0: "${SSLRP_PASSKEY_ORIGIN:-}"
     volumes:
       - sslrp-data:/data
     healthcheck:

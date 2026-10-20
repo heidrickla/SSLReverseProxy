@@ -1,15 +1,29 @@
 import React, { StrictMode } from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from '../services/apiClient';
+import { ApiError, csrfStore } from '../services/apiClient';
 
 const KEY = 'sslrp-api-key';
-const mocks = vi.hoisted(() => ({ bootstrapKey: vi.fn(), whoami: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  bootstrapKey: vi.fn(), whoami: vi.fn(), methods: vi.fn(), session: vi.fn(),
+  passkeyOptions: vi.fn(), passkeySignIn: vi.fn(), logout: vi.fn(), getPasskey: vi.fn(),
+}));
 
 vi.mock('../services/apiClient', async (importOriginal) => {
   const real = await importOriginal<typeof import('../services/apiClient')>();
-  return { ...real, api: { ...real.api, bootstrapKey: mocks.bootstrapKey, whoami: mocks.whoami } };
+  return {
+    ...real,
+    api: {
+      ...real.api, bootstrapKey: mocks.bootstrapKey, whoami: mocks.whoami,
+      auth: {
+        methods: mocks.methods, session: mocks.session, passkeyOptions: mocks.passkeyOptions,
+        passkeySignIn: mocks.passkeySignIn, logout: mocks.logout,
+      },
+    },
+  };
 });
+
+vi.mock('../utils/webauthn', () => ({ getPasskey: mocks.getPasskey }));
 
 vi.mock('../hooks/useApiData', () => ({
   default: () => ({
@@ -34,11 +48,14 @@ const singleUseClaim = (delays: number[]) => {
   };
 };
 
+let auth: ReturnType<typeof import('./AuthContext')['useAuth']>;
+
 const renderApp = async () => {
   // Fresh module per test: the claim is shared at module scope for one page load.
   const { AuthProvider, useAuth } = await import('./AuthContext');
   const Probe = () => {
-    const { authReady, currentUser } = useAuth();
+    auth = useAuth();
+    const { authReady, currentUser } = auth;
     return <div data-testid="probe">{authReady ? currentUser?.name ?? 'signed-out' : 'loading'}</div>;
   };
   render(<StrictMode><AuthProvider><Probe /></AuthProvider></StrictMode>);
@@ -51,7 +68,10 @@ const renderApp = async () => {
 beforeEach(() => {
   vi.resetModules();
   sessionStorage.clear();
+  csrfStore.clear();
   mocks.whoami.mockResolvedValue({ userId: 'u1', name: 'Bootstrap Admin', role: 'Admin', permissions: [] });
+  mocks.methods.mockResolvedValue({ passkeys: false });
+  mocks.session.mockRejectedValue(new ApiError(401, 'Unauthorized'));
 });
 
 afterEach(() => {
@@ -95,5 +115,61 @@ describe('AuthProvider first-run bootstrap claim under StrictMode', () => {
 
     expect(await renderApp()).toBe('Bootstrap Admin');
     expect(sessionStorage.getItem(KEY)).toBe('srp.stored.key');
+  });
+});
+
+describe('AuthProvider passkey sessions', () => {
+  beforeEach(() => {
+    mocks.methods.mockResolvedValue({ passkeys: true });
+    mocks.bootstrapKey.mockRejectedValue(new ApiError(404, 'Not Found'));
+  });
+
+  it('restores a session cookie on load and recovers its CSRF token', async () => {
+    mocks.session.mockResolvedValue({ csrfToken: 'csrf-1', expiresAt: '2026-10-21T00:00:00Z' });
+
+    expect(await renderApp()).toBe('Bootstrap Admin');
+    expect(csrfStore.get()).toBe('csrf-1');
+    expect(auth.passkeysEnabled).toBe(true);
+    expect(mocks.bootstrapKey).not.toHaveBeenCalled();
+  });
+
+  it('does not ask for a session while an API key is held', async () => {
+    sessionStorage.setItem(KEY, 'srp.stored.key');
+
+    expect(await renderApp()).toBe('Bootstrap Admin');
+    expect(mocks.session).not.toHaveBeenCalled();
+    expect(csrfStore.get()).toBeNull();
+  });
+
+  it('signs in with a passkey, dropping any stored key', async () => {
+    expect(await renderApp()).toBe('signed-out');
+    sessionStorage.setItem(KEY, 'srp.stale.key');
+    mocks.passkeyOptions.mockResolvedValue({ handle: 'h1', options: { challenge: 'AQ' } });
+    mocks.getPasskey.mockResolvedValue({ id: 'cred' });
+    mocks.passkeySignIn.mockResolvedValue({
+      csrfToken: 'csrf-2', expiresAt: '2026-10-21T00:00:00Z',
+      user: { userId: 'u2', name: 'Passkey User', role: 'Editor', permissions: [] },
+    });
+
+    await act(() => auth.loginWithPasskey());
+    expect(mocks.passkeySignIn).toHaveBeenCalledWith('h1', { id: 'cred' });
+    expect(screen.getByTestId('probe').textContent).toBe('Passkey User');
+    expect(csrfStore.get()).toBe('csrf-2');
+    expect(sessionStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('revokes the session on sign-out, and forgets a key without calling the server', async () => {
+    mocks.session.mockResolvedValue({ csrfToken: 'csrf-1', expiresAt: '2026-10-21T00:00:00Z' });
+    mocks.logout.mockResolvedValue(undefined);
+    await renderApp();
+    await act(() => auth.logout());
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+    expect(csrfStore.get()).toBeNull();
+    expect(screen.getByTestId('probe').textContent).toBe('signed-out');
+
+    await act(() => auth.login('srp.k.x'));
+    await act(() => auth.logout());
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 });
