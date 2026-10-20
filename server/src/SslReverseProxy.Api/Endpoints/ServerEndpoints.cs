@@ -76,7 +76,7 @@ public static class ServerEndpoints
                 return Results.NotFound();
 
             var problem = ValidateRule(req.Domain, req.UpstreamUrl, validator, req.AllowedCidrs, req.DeniedCidrs,
-                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening,
+                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening, req.Routing,
                 existingAdditionalUpstreams: null, isCreate: true);
             if (problem is not null) return problem;
 
@@ -94,9 +94,11 @@ public static class ServerEndpoints
                 BasicAuthPasswordHash = HashBasicAuth(req.BasicAuthUsername, req.BasicAuthPassword),
             };
             ApplyHardening(rule, req.Hardening);
+            ApplyRouting(rule, req.Routing);
+            if (PlaceholderProblem(rule) is { } braced) return braced;
             db.Rules.Add(rule);
             await db.SaveChangesAsync(ctx.RequestAborted);
-            await audit.AuditAsync(me, ctx, "Create Proxy Rule", "Proxy Rule", rule.Domain);
+            await audit.AuditAsync(me, ctx, "Create Proxy Rule", "Proxy Rule", RouteName(rule));
             SetETag(ctx, rule.Version);
             return Results.Created($"/api/servers/{serverId}/rules/{rule.Id}", rule.ToDto());
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RuleWrite));
@@ -115,7 +117,7 @@ public static class ServerEndpoints
                 return precondition;
 
             var problem = ValidateRule(req.Domain, req.UpstreamUrl, validator, req.AllowedCidrs, req.DeniedCidrs,
-                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening,
+                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening, req.Routing,
                 existingAdditionalUpstreams: rule.AdditionalUpstreams, isCreate: false);
             if (problem is not null) return problem;
 
@@ -133,16 +135,19 @@ public static class ServerEndpoints
             else if (!string.IsNullOrEmpty(req.BasicAuthPassword))
                 rule.BasicAuthPasswordHash = HashBasicAuth(req.BasicAuthUsername, req.BasicAuthPassword);
             ApplyHardening(rule, req.Hardening);
+            ApplyRouting(rule, req.Routing);
+            // Checked on the row as it will be saved; the request scope discards it on refusal.
+            if (PlaceholderProblem(rule) is { } braced) return braced;
             rule.UpdatedAt = DateTimeOffset.UtcNow;
             rule.Version++;
 
             if (await SaveOrConflictAsync(db, ctx) is { } conflict)
             {
-                await audit.AuditAsync(me, ctx, "Update Proxy Rule", "Proxy Rule", rule.Domain,
+                await audit.AuditAsync(me, ctx, "Update Proxy Rule", "Proxy Rule", RouteName(rule),
                     success: false, details: "Lost a concurrent update.");
                 return conflict;
             }
-            await audit.AuditAsync(me, ctx, "Update Proxy Rule", "Proxy Rule", rule.Domain);
+            await audit.AuditAsync(me, ctx, "Update Proxy Rule", "Proxy Rule", RouteName(rule));
             SetETag(ctx, rule.Version);
             return Results.Ok(rule.ToDto());
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RuleWrite));
@@ -165,7 +170,7 @@ public static class ServerEndpoints
             rule.UpdatedAt = DateTimeOffset.UtcNow;
             rule.Version++;
             if (await SaveOrConflictAsync(db, ctx) is { } conflict) return conflict;
-            await audit.AuditAsync(me, ctx, req.Enabled ? "Enable Proxy Rule" : "Disable Proxy Rule", "Proxy Rule", rule.Domain);
+            await audit.AuditAsync(me, ctx, req.Enabled ? "Enable Proxy Rule" : "Disable Proxy Rule", "Proxy Rule", RouteName(rule));
             SetETag(ctx, rule.Version);
             return Results.Ok(rule.ToDto());
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RuleWrite));
@@ -190,7 +195,7 @@ public static class ServerEndpoints
 
             db.Rules.Remove(rule);
             if (await SaveOrConflictAsync(db, ctx) is { } conflict) return conflict;
-            await audit.AuditAsync(me, ctx, "Delete Proxy Rule", "Proxy Rule", rule.Domain);
+            await audit.AuditAsync(me, ctx, "Delete Proxy Rule", "Proxy Rule", RouteName(rule));
             return Results.NoContent();
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RuleWrite));
 
@@ -270,7 +275,8 @@ public static class ServerEndpoints
         string domain, string upstream, ProxyTargetValidator validator,
         string? allowedCidrs, string? deniedCidrs,
         int? rateLimitPerMinute, string? basicAuthUsername, string? basicAuthPassword,
-        RuleHardeningRequest? hardening, string? existingAdditionalUpstreams, bool isCreate)
+        RuleHardeningRequest? hardening, RuleRoutingRequest? routing,
+        string? existingAdditionalUpstreams, bool isCreate)
     {
         var errors = new Dictionary<string, string[]>();
         var d = validator.ValidateDomain(domain);
@@ -285,6 +291,7 @@ public static class ServerEndpoints
         if (isCreate && !string.IsNullOrWhiteSpace(basicAuthUsername) && string.IsNullOrEmpty(basicAuthPassword))
             errors["basicAuthPassword"] = ["A password is required when a basic-auth username is set."];
         ValidateHardening(hardening, upstream, validator, errors);
+        ValidateRouting(routing, errors);
 
         // Checked against the upstreams the rule will actually END UP with, not
         // just the ones in this request. On an update that changes only
@@ -309,6 +316,37 @@ public static class ServerEndpoints
         }
 
         return errors.Count > 0 ? Results.ValidationProblem(errors) : null;
+    }
+
+    private static void ValidateRouting(RuleRoutingRequest? r, Dictionary<string, string[]> errors)
+    {
+        if (r is null) return;
+        if (!RoutePath.TryNormalize(r.PathPrefix, out var prefix, out var error))
+            errors["routing.pathPrefix"] = [error!];
+        else if (r.StripPathPrefix == true && prefix is null)
+            errors["routing.stripPathPrefix"] = ["Stripping needs a path prefix."];
+    }
+
+    /// <summary>Null leaves the rule's routing as it is; a supplied block replaces both fields.</summary>
+    private static void ApplyRouting(ProxyRule rule, RuleRoutingRequest? r)
+    {
+        if (r is null) return;
+        RoutePath.TryNormalize(r.PathPrefix, out var prefix, out _);
+        rule.PathPrefix = prefix;
+        rule.StripPathPrefix = prefix is not null && r.StripPathPrefix == true;
+    }
+
+    private static string RouteName(ProxyRule rule) => rule.Domain + rule.PathPrefix;
+
+    /// <summary>Caddy would expand a brace as a placeholder, reading its own environment into the config.</summary>
+    private static IResult? PlaceholderProblem(ProxyRule rule)
+    {
+        var fields = rule.PlaceholderFields().ToList();
+        return fields.Count == 0
+            ? null
+            : Results.ValidationProblem(fields.ToDictionary(
+                f => char.ToLowerInvariant(f[0]) + f[1..],
+                _ => new[] { "Must not contain '{' or '}'." }));
     }
 
     // Caddy's built-in upstream selection policies that need no extra config.

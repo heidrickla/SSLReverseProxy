@@ -150,6 +150,13 @@ public class CaddyBinaryValidationTests
         ["rate-limit"] = ([R("a.example.com", "http://10.0.0.5", r => r.RateLimitPerMinute = 120)],
             new ProxyOptions()),
 
+        ["path-routes"] = ([
+            R("a.example.com", "http://10.0.0.5", r => r.RateLimitPerMinute = 600),
+            R("a.example.com", "http://10.0.0.6", r => { r.PathPrefix = "/api"; r.StripPathPrefix = true; r.RateLimitPerMinute = 60; }),
+            R("a.example.com", "http://10.0.0.7", r => r.PathPrefix = "/api/v2"),
+            R("plain.example.com", "http://10.0.0.8", r => { r.EnableTls = false; r.PathPrefix = "/x"; }),
+        ], new ProxyOptions()),
+
         ["everything-at-once"] = ([
             R("a.example.com", "https://backend.example.com", r =>
             {
@@ -220,7 +227,7 @@ public class CaddyBinaryValidationTests
         _out.WriteLine(output);
     }
 
-    private static bool Required => Environment.GetEnvironmentVariable("SSLRP_REQUIRE_CADDY") == "1";
+    internal static bool Required => Environment.GetEnvironmentVariable("SSLRP_REQUIRE_CADDY") == "1";
 
     private string? Caddy()
     {
@@ -272,7 +279,7 @@ public class CaddyBinaryValidationTests
         }
     }
 
-    private static string? FindCaddy()
+    internal static string? FindCaddy()
     {
         var configured = Environment.GetEnvironmentVariable("SSLRP_TEST_CADDY");
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return configured;

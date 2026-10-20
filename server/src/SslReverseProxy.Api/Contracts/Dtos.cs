@@ -43,8 +43,18 @@ public sealed record RuleHardeningRequest
     public bool? SkipAccessLog { get; init; }
 }
 
-public sealed record CreateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null);
-public sealed record UpdateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null);
+/// <summary>
+/// Optional path routing. Null leaves the rule's current routing; supplied, both fields are
+/// replaced. A null or "/" prefix serves the whole host.
+/// </summary>
+public sealed record RuleRoutingRequest
+{
+    public string? PathPrefix { get; init; }
+    public bool? StripPathPrefix { get; init; }
+}
+
+public sealed record CreateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null, RuleRoutingRequest? Routing = null);
+public sealed record UpdateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null, RuleRoutingRequest? Routing = null);
 public sealed record ToggleRuleRequest(bool Enabled);
 public sealed record CreateUserRequest(string Name, string Email, Role Role);
 public sealed record UpdateUserRequest(string Name, Role Role, bool IsActive);
@@ -83,7 +93,8 @@ public sealed record RuleHardeningDto
     public bool SkipAccessLog { get; init; }
 }
 
-public sealed record RuleDto(Guid Id, Guid ServerId, string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, bool BasicAuthEnabled, string? BasicAuthUsername, RuleHardeningDto Hardening, int Version);
+public sealed record RuleRoutingDto(string? PathPrefix, bool StripPathPrefix);
+public sealed record RuleDto(Guid Id, Guid ServerId, string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, bool BasicAuthEnabled, string? BasicAuthUsername, RuleHardeningDto Hardening, RuleRoutingDto Routing, int Version);
 public sealed record ProxyValidationDto(bool Valid, IReadOnlyList<string> Issues, bool EngineValidated);
 public sealed record MetricsDto(DateTimeOffset CollectedAt, bool Available, long TotalRequests, long RequestsInFlight, IReadOnlyDictionary<string, double> Series, string? Message);
 
@@ -117,7 +128,7 @@ public static class DtoMappings
 
     public static ServerDto ToDto(this ProxyServer s, ServerHealth h) =>
         new(s.Id, s.Name, s.Host, s.Os, s.Rules?.Count ?? 0, h.Status.ToString(), h.UpstreamsUp, h.UpstreamsTotal, h.CheckedAt);
-    public static RuleDto ToDto(this ProxyRule r) => new(r.Id, r.ServerId, r.Domain, r.UpstreamUrl, r.EnableTls, r.Enabled, r.AllowedCidrs, r.DeniedCidrs, r.RateLimitPerMinute, !string.IsNullOrEmpty(r.BasicAuthPasswordHash), r.BasicAuthUsername, r.ToHardeningDto(), r.Version);
+    public static RuleDto ToDto(this ProxyRule r) => new(r.Id, r.ServerId, r.Domain, r.UpstreamUrl, r.EnableTls, r.Enabled, r.AllowedCidrs, r.DeniedCidrs, r.RateLimitPerMinute, !string.IsNullOrEmpty(r.BasicAuthPasswordHash), r.BasicAuthUsername, r.ToHardeningDto(), new RuleRoutingDto(r.PathPrefix, r.StripPathPrefix), r.Version);
 
     public static RuleHardeningDto ToHardeningDto(this ProxyRule r) => new()
     {

@@ -98,7 +98,7 @@ public class CaddyConfigBuilderTests
         Assert.Contains("\"rate_limit\"", json);
         // The plugin's own field names; a wrong one fails the whole config load.
         var zone = JsonNode.Parse(json)!["apps"]!["http"]!["servers"]![CaddyConfigBuilder.HttpsServer]!
-            ["routes"]![0]!["handle"]!.AsArray().First(h => (string?)h!["handler"] == "rate_limit")!["rate_limits"]!["per_route"]!;
+            ["routes"]![0]!["handle"]!.AsArray().First(h => (string?)h!["handler"] == "rate_limit")!["rate_limits"]![CaddyConfigBuilder.RateLimitZone(rules[0].Id)]!;
         Assert.Equal(60, (int?)zone["max_events"]);
         Assert.Equal("1m", (string?)zone["window"]);
         // {http.request.remote_host} is not a real placeholder - it never

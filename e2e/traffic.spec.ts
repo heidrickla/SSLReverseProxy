@@ -52,6 +52,26 @@ test.describe.serial('the running proxy', () => {
     await expect(card('Time to first byte').locator('p').first()).toHaveText(/^\d+(\.\d)? ms$/);
     await expectNoEmptyCharts(page);
   });
+
+  // After the dashboard test, whose request count this traffic would change.
+  test('routes a path prefix to its own upstream and strips it', async () => {
+    const server = await (await api.post('/api/servers', { data: { name: 'Paths', host: '192.0.2.40', os: 'linux' } })).json();
+    const rule = (domain: string, upstreamUrl: string, routing: object | null) =>
+      api.post(`/api/servers/${server.id}/rules`, { data: { domain, upstreamUrl, enableTls: false, enabled: true, routing } });
+    // The whole-host rule goes to the discard port, so anything it serves is a 502.
+    expect((await rule('paths.example.com', 'http://127.0.0.1:9', null)).status()).toBe(201);
+    expect((await rule('paths.example.com', 'http://127.0.0.1:5195', { pathPrefix: '/svc', stripPathPrefix: true })).status()).toBe(201);
+    expect((await rule('paths.example.com', 'http://127.0.0.1:5195', { pathPrefix: '/raw', stripPathPrefix: false })).status()).toBe(201);
+    const reloaded = await (await api.post('/api/proxy/reload')).json();
+    expect(reloaded.state, reloaded.message ?? '').toBe('Running');
+
+    expect((await proxyGet('paths.example.com', '/svc/api/health')).status).toBe(200);
+    expect((await proxyGet('paths.example.com', '/SVC/api/health')).status).toBe(200);
+    // Unstripped, the API sees /raw/api/health; its deny-by-default fallback answers 401 for a path it does not serve.
+    expect((await proxyGet('paths.example.com', '/raw/api/health')).status).toBe(401);
+    expect((await proxyGet('paths.example.com', '/svcx/api/health')).status).toBe(502);
+    expect((await proxyGet('paths.example.com', '/api/health')).status).toBe(502);
+  });
 });
 
 async function expectNoEmptyCharts(page: Page) {

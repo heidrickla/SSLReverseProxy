@@ -38,6 +38,12 @@ public sealed class ProxyOptions
     public int HttpPort { get; set; } = 80;
     public int HttpsPort { get; set; } = 443;
 
+    /// <summary>
+    /// Cloudflare API token for DNS-01 challenges, needing Zone:Read and DNS:Edit on the zones.
+    /// Caddy reads it from its environment; the config holds only a placeholder.
+    /// </summary>
+    public string? CloudflareApiToken { get; set; }
+
     public bool AllowLoopbackUpstreams { get; set; } = true;
     public bool AllowPrivateUpstreams { get; set; } = true;
 

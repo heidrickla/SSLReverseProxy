@@ -83,12 +83,15 @@ export interface RuleHardening {
   healthCheckExpectStatus: number | null;
   skipAccessLog: boolean;
 }
+/** Path routing. A null prefix serves the whole host. Mirrors RuleRoutingDto. */
+export interface RuleRouting { pathPrefix: string | null; stripPathPrefix: boolean; }
 export interface Rule {
   id: string; serverId: string; domain: string; upstreamUrl: string;
   enableTls: boolean; enabled: boolean; allowedCidrs: string | null; deniedCidrs: string | null;
   rateLimitPerMinute: number | null;
   basicAuthEnabled: boolean; basicAuthUsername: string | null;
   hardening: RuleHardening;
+  routing: RuleRouting;
   /**
    * Optimistic-concurrency token. Pass it back on update/delete so an edit made
    * from a stale copy is rejected rather than silently overwriting whoever
@@ -115,6 +118,8 @@ export interface RuleInput {
   rateLimitPerMinute?: number | null;
   basicAuthUsername?: string | null; basicAuthPassword?: string | null;
   hardening?: RuleHardening | null;
+  /** Omitted or null leaves the rule's routing as it is; sent, both fields are written. */
+  routing?: RuleRouting | null;
 }
 export interface WhoAmI { userId: string | null; name: string; role: string; permissions: string[]; }
 export interface ProxyValidation { valid: boolean; issues: string[]; engineValidated: boolean; }

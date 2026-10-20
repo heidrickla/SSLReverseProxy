@@ -264,6 +264,10 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.Property<long?>("MaxRequestBodyBytes")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("PathPrefix")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("RateLimitPerMinute")
                         .HasColumnType("INTEGER");
 
@@ -271,6 +275,9 @@ namespace SslReverseProxy.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("SkipAccessLog")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("StripPathPrefix")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTimeOffset>("UpdatedAt")

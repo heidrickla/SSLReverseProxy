@@ -46,7 +46,14 @@ public static class ProxyEndpoints
         group.MapGet("/config", async (IProxyController proxy, AppDbContext db, CancellationToken ct) =>
         {
             var rules = await db.Rules.AsNoTracking().ToListAsync(ct);
-            return Results.Text(proxy.BuildConfigJson(rules), "application/json");
+            try
+            {
+                return Results.Text(proxy.BuildConfigJson(rules), "application/json");
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(title: "Config cannot be built", detail: ex.Message, statusCode: StatusCodes.Status409Conflict);
+            }
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
 
         // Dry-run: validate the current rule set without touching the live proxy.

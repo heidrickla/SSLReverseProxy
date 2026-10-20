@@ -64,6 +64,12 @@ public class ProxyRule
     public bool EnableTls { get; set; } = true;
     public bool Enabled { get; set; } = true;
 
+    /// <summary>Path this rule serves under its host, such as "/api", without a trailing slash. Null serves the whole host.</summary>
+    public string? PathPrefix { get; set; }
+
+    /// <summary>Removes <see cref="PathPrefix"/> from the request path before proxying.</summary>
+    public bool StripPathPrefix { get; set; }
+
     // Per-route access control (native Caddy remote_ip matchers). Stored as
     // comma-separated CIDRs; empty means "no restriction".
     public string? AllowedCidrs { get; set; }

@@ -33,10 +33,10 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
    * `changes` applied on top.
    *
    * PUT replaces the whole rule, so every field this pane does not edit still
-   * has to be sent or the server clears it. Two fields are deliberately absent:
+   * has to be sent or the server clears it. These are absent:
    *
-   *  - `hardening`: omitting the block entirely tells the API to leave those
-   *    settings alone, which is what we want since nothing here edits them.
+   *  - `hardening` and `routing`: omitting a block tells the API to leave those
+   *    settings alone. The rule modal sends `routing` itself, through `changes`.
    *  - `basicAuthPassword`: write-only, and the API keeps the stored hash when a
    *    username arrives without a new password.
    *
@@ -121,7 +121,12 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                             onClick={canManageRules ? () => setModalState({ isOpen: true, rule }) : undefined}
                         >
                            <div>
-                                <p className="text-sm font-medium text-on-surface">{rule.domain}</p>
+                                <p className="text-sm font-medium text-on-surface">
+                                    {rule.domain}{rule.routing?.pathPrefix ?? ''}
+                                    {rule.routing?.stripPathPrefix && (
+                                        <span className="ml-2 rounded-md bg-surface-raised px-1.5 py-0.5 text-xs font-normal text-on-surface-muted">strip</span>
+                                    )}
+                                </p>
                                 <p className="mt-0.5 text-xs text-on-surface-muted">to {rule.upstreamUrl}</p>
                            </div>
                            <div onClick={e => e.stopPropagation()}>

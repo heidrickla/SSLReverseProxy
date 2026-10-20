@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
+using SslReverseProxy.Infrastructure.Security;
 
 namespace SslReverseProxy.Infrastructure.Proxy;
 
@@ -24,6 +25,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
     private readonly ILogger<CaddyProxyController> _logger;
     private readonly TimeProvider _clock;
     private readonly TrafficRecorder _traffic;
+    private readonly SecretRedactor _redactor;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Process? _process;
@@ -35,13 +37,15 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         IHttpClientFactory httpFactory,
         ILogger<CaddyProxyController> logger,
         TimeProvider clock,
-        TrafficRecorder traffic)
+        TrafficRecorder traffic,
+        SecretRedactor redactor)
     {
         _options = options.Value;
         _httpFactory = httpFactory;
         _logger = logger;
         _clock = clock;
         _traffic = traffic;
+        _redactor = redactor;
     }
 
     public async Task<ProxyStatus> GetStatusAsync(CancellationToken ct = default)
@@ -68,15 +72,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
             await File.WriteAllTextAsync(configPath,
                 CaddyConfigBuilder.Build(Array.Empty<ProxyRule>(), _options).ToJsonString(), ct);
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = _options.CaddyPath,
-                ArgumentList = { "run", "--config", configPath },
-                UseShellExecute = false,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                CreateNoWindow = true,
-            };
+            var psi = CaddyEnvironment.StartInfo(_options, "run", "--config", configPath);
 
             var proc = Process.Start(psi);
             if (proc is null)
@@ -152,6 +148,8 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
                     ? Unavailable("Caddy is not installed.")
                     : Stopped("Proxy is stopped; start it before applying configuration.");
 
+            if (PlaceholderIssues(rules).FirstOrDefault() is { } refused)
+                return Faulted(refused);
             var config = CaddyConfigBuilder.Build(rules, _options);
             var ok = await PostConfigAsync(config, ct);
             if (!ok)
@@ -172,10 +170,20 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
 
         // Structural checks always run, regardless of whether Caddy is installed.
         var enabled = rules.Where(r => r.Enabled).ToList();
-        var dupes = enabled.GroupBy(r => r.Domain, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() > 1).Select(g => g.Key);
+        var dupes = enabled.GroupBy(r => RoutePath.RouteKey(r.Domain, r.PathPrefix))
+            .Where(g => g.Count() > 1).Select(g => g.First());
         foreach (var d in dupes)
-            issues.Add($"Duplicate domain '{d}' — only one rule per host is allowed.");
+            issues.Add(d.PathPrefix is null
+                ? $"Duplicate domain '{d.Domain}' — only one whole-host rule per host is allowed."
+                : $"Duplicate route '{d.Domain}{d.PathPrefix}' — only one rule per host and path is allowed.");
+
+        // A host is served by one Caddy server, so its rules cannot disagree on TLS.
+        var mixed = enabled.GroupBy(r => r.Domain.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Select(r => r.EnableTls).Distinct().Count() > 1).Select(g => g.Key);
+        foreach (var d in mixed)
+            issues.Add($"Rules for '{d}' disagree on TLS — every rule for a host must use the same setting.");
+
+        issues.AddRange(PlaceholderIssues(enabled));
 
         foreach (var r in enabled)
         {
@@ -203,21 +211,16 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
             await File.WriteAllTextAsync(tmp, configJson, ct);
             try
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = _options.CaddyPath,
-                    ArgumentList = { "validate", "--config", tmp },
-                    UseShellExecute = false,
-                    RedirectStandardError = true,
-                    RedirectStandardOutput = true,
-                    CreateNoWindow = true,
-                };
-                var proc = Process.Start(psi);
+                var psi = CaddyEnvironment.StartInfo(_options, "validate", "--config", tmp);
+                using var proc = Process.Start(psi);
                 if (proc is null) return false;
+                // Both streams drained together, so neither pipe fills while the other is read.
+                var stdout = proc.StandardOutput.ReadToEndAsync(ct);
                 var stderr = await proc.StandardError.ReadToEndAsync(ct);
+                await stdout;
                 await proc.WaitForExitAsync(ct);
                 if (proc.ExitCode != 0)
-                    issues.Add($"Caddy validation failed: {stderr.Trim()}");
+                    issues.Add($"Caddy validation failed: {_redactor.Redact(stderr.Trim())}");
                 return proc.ExitCode == 0;
             }
             finally
@@ -234,6 +237,10 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
 
     public async Task<ProxyStatus> ApplyRawConfigAsync(string configJson, CancellationToken ct = default)
     {
+        // A snapshot holds placeholders, never secret values; one that does was not written by us.
+        if (_redactor.Contains(configJson))
+            return Faulted("Refused: the config contains a configured secret value.");
+
         await _gate.WaitAsync(ct);
         try
         {
@@ -338,7 +345,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         var level = line.Contains("\"level\":\"error\"") || line.Contains("\"level\":\"fatal\"") || line.Contains("\"level\":\"panic\"")
             ? LogLevel.Error
             : line.Contains("\"level\":\"warn\"") ? LogLevel.Warning : LogLevel.Debug;
-        _logger.Log(level, "caddy: {Line}", line);
+        _logger.Log(level, "caddy: {Line}", _redactor.Redact(line));
     }
 
     private HttpClient AdminClient()
@@ -360,7 +367,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync(ct);
-                _logger.LogError("Caddy /load failed ({Status}): {Body}", (int)resp.StatusCode, body);
+                _logger.LogError("Caddy /load failed ({Status}): {Body}", (int)resp.StatusCode, _redactor.Redact(body));
                 return false;
             }
             return true;
@@ -371,6 +378,10 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
             return false;
         }
     }
+
+    private static IEnumerable<string> PlaceholderIssues(IEnumerable<ProxyRule> rules) =>
+        rules.SelectMany(r => r.PlaceholderFields().Select(f =>
+            $"Rule '{r.Domain}{r.PathPrefix}' has '{{' or '}}' in {f}; Caddy would read it as a placeholder."));
 
     private bool BinaryAvailable()
     {

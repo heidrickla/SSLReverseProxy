@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Rule } from '../services/apiClient';
+import { Rule, RuleRouting } from '../services/apiClient';
 import Modal from './Modal';
 import Button from './Button';
 import ToggleSwitch from './icons/ToggleSwitch';
 import { isValidDomain, validateProxyTarget } from '../utils/validation';
 
-// This form edits three fields; the rest of a rule (access control, rate limit,
-// basic auth, hardening) is preserved by the caller rather than shown here.
-export type ProxyRuleFormData = { domain: string; upstreamUrl: string; enableTls: boolean };
+// This form edits the host, path and upstream; the rest of a rule (access control,
+// rate limit, basic auth, hardening) is preserved by the caller rather than shown here.
+export type ProxyRuleFormData = { domain: string; upstreamUrl: string; enableTls: boolean; routing: RuleRouting };
 
 interface ProxyRuleModalProps {
   isOpen: boolean;
@@ -27,12 +27,16 @@ const ProxyRuleModal: React.FC<ProxyRuleModalProps> = ({
   const [domain, setDomain] = useState('');
   const [proxyTo, setProxyTo] = useState('');
   const [ssl, setSsl] = useState(true);
+  const [pathPrefix, setPathPrefix] = useState('');
+  const [stripPrefix, setStripPrefix] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setDomain(initialRule?.domain || '');
       setProxyTo(initialRule?.upstreamUrl || '');
       setSsl(initialRule?.enableTls ?? true);
+      setPathPrefix(initialRule?.routing?.pathPrefix ?? '');
+      setStripPrefix(initialRule?.routing?.stripPathPrefix ?? false);
     }
   }, [isOpen, initialRule]);
 
@@ -51,7 +55,17 @@ const ProxyRuleModal: React.FC<ProxyRuleModalProps> = ({
       alert(targetCheck.reason);
       return;
     }
-    onSave({ domain: domain.trim(), upstreamUrl: proxyTo.trim(), enableTls: ssl });
+    const prefix = pathPrefix.trim();
+    if (prefix && !prefix.startsWith('/')) {
+      alert('The path prefix must start with /, e.g. /api.');
+      return;
+    }
+    onSave({
+      domain: domain.trim(),
+      upstreamUrl: proxyTo.trim(),
+      enableTls: ssl,
+      routing: { pathPrefix: prefix || null, stripPathPrefix: !!prefix && stripPrefix },
+    });
   };
   
   const isEditMode = initialRule !== null;
@@ -68,6 +82,25 @@ const ProxyRuleModal: React.FC<ProxyRuleModalProps> = ({
             onChange={(e) => setDomain(e.target.value)}
             placeholder="app.example.com"
             className="field"
+          />
+        </div>
+        <div>
+          <label htmlFor="rule-pathPrefix" className="field-label">Path prefix</label>
+          <input
+            type="text"
+            id="rule-pathPrefix"
+            value={pathPrefix}
+            onChange={(e) => setPathPrefix(e.target.value)}
+            placeholder="/api (blank for the whole host)"
+            className="field"
+          />
+        </div>
+        <div>
+          <ToggleSwitch
+            enabled={stripPrefix && pathPrefix.trim() !== ''}
+            onChange={setStripPrefix}
+            label="Strip the prefix before proxying"
+            disabled={pathPrefix.trim() === ''}
           />
         </div>
         <div>

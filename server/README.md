@@ -26,7 +26,8 @@ The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a
 | Transport | HSTS and HTTPS redirect in Production; security headers and a JSON-only CSP on every response. |
 | Abuse | Per-IP fixed-window rate limit, 100 a minute. |
 | Audit | Append-only log of every control and mutation action (actor, action, target, source IP). |
-| Secrets | Pepper, client-certificate thumbprints and ACME email from configuration, user-secrets or environment. |
+| Secrets | Pepper, client-certificate thumbprints and ACME email from configuration, user-secrets or environment. Configured secret values are masked in Caddy's forwarded output, `/load` errors and validation issues, and a rollback config holding one is refused. |
+| Caddy process | Started with a fixed environment: system paths, its data and config directories, outbound proxy and trust-store variables, and the Cloudflare token when set. Rule text may not contain `{` or `}`, which Caddy reads as placeholders. |
 
 ## Configuration
 
@@ -110,8 +111,18 @@ Servers and rules
 
 - `GET /api/servers` returns each server's `status`, `upstreamsUp`, `upstreamsTotal` and `statusCheckedAt`.
 - `GET/POST/DELETE /api/servers`, `GET/POST/PUT/DELETE .../rules`: SSRF-validated. Per-route IP allow and deny (`allowedCidrs`, `deniedCidrs`, Caddy `client_ip`), rate limiting (`rateLimitPerMinute`, caddy-ratelimit) and basic auth (`basicAuthUsername`, `basicAuthPassword`, bcrypt-hashed server-side, never returned).
+- Each rate-limited rule has its own limiter zone.
 - `PATCH .../rules/{id}/enabled`: enable or disable.
 - `GET .../rules/{id}/health`: probe the upstream (SSRF policy applied).
+
+Rules take an optional `routing` object. Omitted, routing is unchanged; sent, both fields are replaced.
+
+| Field | Effect |
+| --- | --- |
+| `pathPrefix` | Serves only this path and below it, such as `/api`. Null or `/` serves the whole host. Letters, digits, `-`, `.`, `_`, `~` and `/`; a trailing slash is dropped. |
+| `stripPathPrefix` | Removes the prefix before proxying, so `/api/users` reaches the upstream as `/users`. |
+
+A host's rules match longest prefix first and the whole-host rule last, ignoring case as Caddy does. Host plus prefix is unique, all rules for a host share one TLS setting, and `skipAccessLog` applies to the host.
 
 Rules take an optional `hardening` object. Omitted, nothing changes; sent, every field in it is replaced.
 

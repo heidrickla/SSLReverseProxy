@@ -35,7 +35,16 @@ public static class CaddyConfigBuilder
 
     public static JsonObject Build(IReadOnlyCollection<ProxyRule> rules, ProxyOptions options)
     {
-        var active = rules.Where(r => r.Enabled).ToList();
+        // Caddy runs the first matching terminal route, so the longest path prefix
+        // goes first and a host's whole-host rule last. OrderBy is stable.
+        var active = rules.Where(r => r.Enabled)
+            .OrderByDescending(r => r.PathPrefix?.Length ?? -1)
+            .ToList();
+
+        // The API refuses braces; this holds the line for rows written before it did.
+        if (active.FirstOrDefault(r => r.PlaceholderFields().Any()) is { } braced)
+            throw new InvalidOperationException(
+                $"Rule '{braced.Domain}{braced.PathPrefix}' has '{{' or '}}' in {string.Join(", ", braced.PlaceholderFields())}.");
         var tlsRoutes = new JsonArray();
         var plainRoutes = new JsonArray();
 
@@ -57,7 +66,7 @@ public static class CaddyConfigBuilder
 
             // Rate limit (caddy-ratelimit plugin) — requires the plugin in the build.
             if (rule.RateLimitPerMinute is > 0)
-                handle.Add(BuildRateLimitHandler(rule.RateLimitPerMinute.Value));
+                handle.Add(BuildRateLimitHandler(rule.Id, rule.RateLimitPerMinute.Value));
 
             // Body cap before auth, so an oversized upload is bounded at the
             // cheapest point rather than after credentials are checked.
@@ -72,11 +81,20 @@ public static class CaddyConfigBuilder
             if (!string.IsNullOrEmpty(rule.BasicAuthUsername) && !string.IsNullOrEmpty(rule.BasicAuthPasswordHash))
                 handle.Add(BuildBasicAuthHandler(rule.BasicAuthUsername!, rule.BasicAuthPasswordHash!));
 
+            // Caddy's strip is case-insensitive like its path matcher and leaves "/"
+            // when the whole path was the prefix.
+            if (rule.StripPathPrefix && rule.PathPrefix is { } strip)
+                handle.Add(new JsonObject { ["handler"] = "rewrite", ["strip_path_prefix"] = strip });
+
             handle.Add(BuildReverseProxyHandler(rule));
+
+            var match = new JsonObject { ["host"] = new JsonArray { rule.Domain } };
+            if (rule.PathPrefix is { } prefix)
+                match["path"] = new JsonArray { prefix, prefix + "/*" };
 
             (rule.EnableTls ? tlsRoutes : plainRoutes).Add(new JsonObject
             {
-                ["match"] = new JsonArray { new JsonObject { ["host"] = new JsonArray { rule.Domain } } },
+                ["match"] = new JsonArray { match },
                 ["handle"] = handle,
                 ["terminal"] = true,
             });
@@ -446,6 +464,11 @@ public static class CaddyConfigBuilder
     /// <summary>
     /// caddy-ratelimit plugin handler: N events per minute, keyed by client IP.
     /// <para>
+    /// The plugin keeps limiter state in a process-wide map keyed by zone name and
+    /// applies the last provisioned limit to every handler sharing it, so each rule
+    /// gets its own zone.
+    /// </para>
+    /// <para>
     /// The key is the same client IP the access rules match on, so a limit and
     /// an allow-list on one route always talk about the same address. Note
     /// <c>{http.request.remote_host}</c> is NOT a real placeholder — the actual
@@ -453,12 +476,12 @@ public static class CaddyConfigBuilder
     /// bucket for every client, turning a per-IP limit into a global one.
     /// </para>
     /// </summary>
-    private static JsonObject BuildRateLimitHandler(int perMinute) => new()
+    private static JsonObject BuildRateLimitHandler(Guid ruleId, int perMinute) => new()
     {
         ["handler"] = "rate_limit",
         ["rate_limits"] = new JsonObject
         {
-            ["per_route"] = new JsonObject
+            [RateLimitZone(ruleId)] = new JsonObject
             {
                 ["key"] = "{http.vars.client_ip}",
                 ["max_events"] = perMinute,
@@ -466,6 +489,8 @@ public static class CaddyConfigBuilder
             },
         },
     };
+
+    public static string RateLimitZone(Guid ruleId) => $"rule_{ruleId:N}";
 
     // Native Caddy basic_auth handler using a bcrypt-hashed password.
     private static JsonObject BuildBasicAuthHandler(string username, string bcryptHash) => new()
