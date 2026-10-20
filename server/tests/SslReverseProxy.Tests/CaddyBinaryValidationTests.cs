@@ -62,6 +62,9 @@ public class CaddyBinaryValidationTests
         return data;
     }
 
+    // caddy validate opens the log file, so the path must be one the test user can create.
+    private static readonly string AccessLog = Path.Combine(Path.GetTempPath(), "sslrp-validate", "access.log");
+
     private static readonly Dictionary<string, (ProxyRule[] Rules, ProxyOptions Options)> Cases = new()
     {
         ["minimal"] = ([R("a.example.com", "http://10.0.0.5")], new ProxyOptions()),
@@ -107,7 +110,7 @@ public class CaddyBinaryValidationTests
         ["access-logging"] = ([
             R("a.example.com", "http://10.0.0.5"),
             R("quiet.example.com", "http://10.0.0.6", r => r.SkipAccessLog = true),
-        ], new ProxyOptions { AccessLogPath = "/var/log/caddy/access.log" }),
+        ], new ProxyOptions { AccessLogPath = AccessLog }),
 
         ["server-timeouts-and-tls13"] = ([R("a.example.com", "http://10.0.0.5")], new ProxyOptions
         {
@@ -171,7 +174,7 @@ public class CaddyBinaryValidationTests
         ], new ProxyOptions
         {
             TrustedProxyCidrs = "10.0.0.0/8",
-            AccessLogPath = "/var/log/caddy/access.log",
+            AccessLogPath = AccessLog,
             ReadHeaderTimeoutSeconds = 10,
             IdleTimeoutSeconds = 120,
             AcmeContactEmail = "ops@example.com",

@@ -6,6 +6,9 @@
 # Caddy is built with the caddy-ratelimit plugin at the pins in server/Dockerfile
 # (.github/actions/caddy) and cached on them. SSLRP_REQUIRE_CADDY=1 makes the
 # Caddy tests fail, not skip, when the binary or the plugin is missing.
+#
+# The forge holds main and GitHub mirrors it. Every job runs on GitHub only:
+# the forge's shared runner skips them (github.server_url).
 name: CI
 
 on:
@@ -42,6 +45,7 @@ jobs:
   # original workflow for that reason, even though both now do more than before.
   backend:
     name: Backend (.NET)
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -96,6 +100,7 @@ jobs:
 
   frontend:
     name: Frontend (React)
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -159,6 +164,7 @@ jobs:
   # dashboard. playwright.config.ts starts both servers on a new database.
   e2e:
     name: Browser smoke test
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -190,6 +196,7 @@ jobs:
   # and the API answers the compose healthcheck's own command inside the container.
   image:
     name: Container image
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -206,8 +213,9 @@ jobs:
           set -euo pipefail
           modules=$(docker run --rm --entrypoint caddy sslreverseproxy:ci list-modules)
           grep -qx 'http.handlers.rate_limit' <<< "$modules"
-          docker run -d --name sslrp -e Security__ApiKeyPepper=ci-only-pepper sslreverseproxy:ci
+          docker run -d --name sslrp -e Security__ApiKeyPepper="$(openssl rand -base64 32)" sslreverseproxy:ci
           for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Running}}' sslrp)" = true ] || break
             if docker exec sslrp curl -fsS http://localhost:8080/api/health; then
               docker exec sslrp test -f /data/sslrp.db
               exit 0
@@ -224,7 +232,7 @@ jobs:
   # (no patched release in range) still fails the run.
   audit-heal:
     name: Dependency CVEs (npm, high+, self-fixing)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.server_url == 'https://github.com' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: write
