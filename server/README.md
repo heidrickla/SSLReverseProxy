@@ -39,6 +39,8 @@ use a mature, audited implementation instead of hand-rolled crypto.
 - `Security:ApiKeyPepper` — base64 pepper mixed into key hashing. **Set via secrets.**
 - `Security:RequireMutualTls` + `Security:AllowedClientCertificateThumbprints` — enable/pin mTLS.
 - `Security:CorsAllowedOrigins` — SPA origin(s); empty = no cross-origin access.
+- `Proxy:ServerHealthIntervalSeconds` — seconds between background probes of every enabled rule's upstreams (default 60; 0 turns the monitor off). Each server's `status` is `Active` (every upstream answered), `Error` (at least one did not), `Inactive` (no enabled rule) or `Unknown` (not probed yet). A successful write under `/api/servers` probes again at once. Probes apply the SSRF policy.
+- `Seed:Demo` — Development only: fills a new database with demo servers, rules, certificates, users and audit entries. Upstreams point at `Seed:DemoUpstreamBase` (default `http://127.0.0.1:5195`, this API under the `http` launch profile) and at the discard port, so the three servers come up `Active`, `Error` and `Inactive`. Ignored, with a warning, in any other environment.
 - `Proxy:CaddyPath`, `Proxy:AdminEndpoint` (loopback), `Proxy:AcmeContactEmail`, `Proxy:UseAcmeStaging`.
 - `Proxy:AllowLoopbackUpstreams`, `Proxy:AllowPrivateUpstreams` — SSRF policy.
 - `Proxy:TrustedProxyCidrs` — CIDRs of any L7 proxy in front of **Caddy**. Empty (the default)
@@ -97,7 +99,7 @@ Meta
 - `GET /api/health` — anonymous liveness. `GET /api/ready` — anonymous readiness (DB + proxy).
 - `GET /api/bootstrap-key` — one-time first-run key claim (Development + loopback only; otherwise 404).
 - `GET /api/whoami` — current principal + permissions.
-- `GET /api/events` — Server-Sent Events stream of control-plane events.
+- `GET /api/events` — Server-Sent Events stream of control-plane events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes. Response headers are sent once the subscriber is registered, so a client cannot miss an event published after it has them.
 
 Control service
 - `GET /api/proxy/status`, `POST /api/proxy/{start|stop|reload}`.
@@ -107,6 +109,7 @@ Control service
 - `GET /api/proxy/snapshots`, `POST /api/proxy/rollback` — config history + one-call rollback.
 
 Servers / rules
+- `GET /api/servers` returns each server's `status`, `upstreamsUp`, `upstreamsTotal` and `statusCheckedAt` from the background monitor.
 - `GET/POST/DELETE /api/servers`, `GET/POST/PUT/DELETE .../rules` — SSRF-validated. Per-route
   access control: IP allow/deny (`allowedCidrs`/`deniedCidrs`, native Caddy `client_ip`),
   rate limiting (`rateLimitPerMinute`, caddy-ratelimit plugin), and HTTP basic auth
@@ -185,6 +188,4 @@ Users / keys / audit
 
 ## Frontend
 
-The React app talks to this API via [`services/apiClient.ts`](../services/apiClient.ts)
-(sends `X-Api-Key`). Set `VITE_API_BASE_URL` to the API origin. Swapping the app's
-mock data hooks over to `api.*` is the remaining integration step.
+The React app talks to this API via [`services/apiClient.ts`](../services/apiClient.ts) (sends `X-Api-Key`). By default it calls `/api` on its own origin: serve the UI and route `/api` to this API from the same edge. To serve the UI from another origin, build it with `VITE_API_BASE_URL` set to the API origin; the build adds that origin to its CSP `connect-src`, and the API needs the UI's origin in `Security:CorsAllowedOrigins` (`SSLRP_SPA_ORIGIN` in docker-compose). Framing protection goes on the server that serves the UI, as a header (`Content-Security-Policy: frame-ancestors 'none'` or `X-Frame-Options: DENY`); a `<meta>` policy cannot carry it.

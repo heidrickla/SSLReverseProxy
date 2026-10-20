@@ -14,14 +14,25 @@ public static class ServerEndpoints
     {
         var servers = app.MapGroup("/api/servers").WithTags("Servers");
 
-        servers.MapGet("/", async (AppDbContext db) =>
-            Results.Ok((await db.Servers.AsNoTracking().Include(s => s.Rules).ToListAsync())
-                .Select(s => s.ToDto())))
+        // A successful write can change which upstreams a server routes to, so the
+        // monitor probes again now instead of showing the old status for a whole interval.
+        servers.AddEndpointFilter(async (ctx, next) =>
+        {
+            var result = await next(ctx);
+            if (!HttpMethods.IsGet(ctx.HttpContext.Request.Method)
+                && result is IStatusCodeHttpResult { StatusCode: >= 200 and < 300 })
+                ctx.HttpContext.RequestServices.GetRequiredService<IServerHealthStore>().RequestCheck();
+            return result;
+        });
+
+        servers.MapGet("/", async (AppDbContext db, IServerHealthStore health) =>
+            Results.Ok((await db.Servers.AsNoTracking().Include(s => s.Rules).OrderBy(s => s.Name).ToListAsync())
+                .Select(s => s.ToDto(health.Get(s.Id)))))
             .RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead));
 
         servers.MapPost("/", async (
             CreateServerRequest req, AppDbContext db, ProxyTargetValidator validator,
-            IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
+            IServerHealthStore health, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
             var domainCheck = validator.ValidateDomain(req.Host);
             if (!domainCheck.Ok && !System.Net.IPAddress.TryParse(req.Host, out _))
@@ -37,7 +48,7 @@ public static class ServerEndpoints
             db.Servers.Add(server);
             await db.SaveChangesAsync(ctx.RequestAborted);
             await audit.AuditAsync(me, ctx, "Create Server", "Server", server.Name);
-            return Results.Created($"/api/servers/{server.Id}", server.ToDto());
+            return Results.Created($"/api/servers/{server.Id}", server.ToDto(health.Get(server.Id)));
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerWrite));
 
         servers.MapDelete("/{id:guid}", async (
@@ -53,7 +64,7 @@ public static class ServerEndpoints
 
         // Rules nested under a server.
         servers.MapGet("/{serverId:guid}/rules", async (Guid serverId, AppDbContext db) =>
-            Results.Ok((await db.Rules.AsNoTracking().Where(r => r.ServerId == serverId).ToListAsync())
+            Results.Ok((await db.Rules.AsNoTracking().Where(r => r.ServerId == serverId).OrderBy(r => r.Domain).ToListAsync())
                 .Select(r => r.ToDto())))
             .RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead));
 

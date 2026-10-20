@@ -11,10 +11,12 @@ namespace SslReverseProxy.Infrastructure.Persistence;
 /// Ensures the database exists and seeds a single bootstrap admin + API key on
 /// first run. The plaintext token is written to the log exactly once so the
 /// operator can capture it; it is never stored or recoverable afterward.
+/// A non-null <c>demoUpstreamBase</c> also fills the new database with
+/// <see cref="DemoSeeder"/> data.
 /// </summary>
 public static class DbBootstrapper
 {
-    public static async Task InitializeAsync(IServiceProvider services, CancellationToken ct = default)
+    public static async Task InitializeAsync(IServiceProvider services, string? demoUpstreamBase = null, CancellationToken ct = default)
     {
         using var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -44,5 +46,12 @@ public static class DbBootstrapper
         logger.LogWarning(
             "Seeded bootstrap admin. One-time API key (store it now, it will not be shown again): {Token}",
             issued.PlaintextToken);
+
+        if (demoUpstreamBase is not null)
+        {
+            var now = scope.ServiceProvider.GetRequiredService<TimeProvider>().GetUtcNow();
+            await DemoSeeder.SeedAsync(db, demoUpstreamBase, admin.Name, now, ct);
+            logger.LogInformation("Seeded demo data with upstreams at {UpstreamBase}.", demoUpstreamBase);
+        }
     }
 }

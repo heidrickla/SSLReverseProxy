@@ -10,6 +10,7 @@ import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import { isValidHostOrIp } from '../utils/validation';
 import EmptyState from '../components/EmptyState';
 import ServerIcon from '../components/icons/ServerIcon';
+import ServerStatusBadge from '../components/ServerStatusBadge';
 
 const AddServerModal: React.FC<{
     isOpen: boolean;
@@ -79,6 +80,7 @@ const ServerRow: React.FC<{ server: Server; onSelect: (server: Server) => void; 
                     {server.name}
                 </div>
             </td>
+            <td><ServerStatusBadge server={server} /></td>
             <td className="text-on-surface-muted tabular-nums">{server.host}</td>
             <td><span className="inline-flex min-w-7 justify-center rounded-md bg-surface-raised px-2 py-0.5 text-xs font-medium text-on-surface tabular-nums">{server.ruleCount}</span></td>
         </tr>
@@ -118,6 +120,7 @@ const Servers: React.FC = () => {
                         <thead>
                             <tr>
                                 <th>Name</th>
+                                <th>Status</th>
                                 <th>Host</th>
                                 <th>Rules</th>
                             </tr>

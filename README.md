@@ -24,7 +24,7 @@ an append-only audit trail with config snapshots and one-call rollback.
 
 ## Screenshots
 
-Screenshots show the application with sample API responses, example domains, and documentation IP addresses. Dashboard charts and performance figures are illustrative.
+Screenshots show the application running against the control plane's Development demo data (`Seed:Demo`), with example domains and documentation IP addresses. Dashboard charts and performance figures are illustrative.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -45,20 +45,17 @@ Screenshots show the application with sample API responses, example domains, and
 **Frontend** (prerequisites: Bun 1.4 and Node.js 22.12 or later)
 
 1. `bun install`
-2. `bun run dev` — or `bun run build && bun run preview` for a production build
-   (which injects the Content-Security-Policy).
+2. `bun run dev` — or `bun run build && bun run preview` for a production build (which injects the Content-Security-Policy). Both forward `/api` to the control plane at `http://localhost:5195`; `SSLRP_API_TARGET` changes the target.
 3. `bun run test` runs the Vitest suite.
+4. `bun run e2e` runs the Playwright smoke test. It starts the control plane with demo data on a new database, builds and previews the UI, and checks every view in both themes, server statuses and live status updates. It needs the .NET 10 SDK and free ports 5195 and 4173; install the browser once with `bunx playwright install chromium`.
+5. `bun run screenshots` retakes `docs/screenshots` from the same demo data.
 
 **Backend** (prerequisite: .NET 10 SDK)
 
 ```bash
 cd server
-dotnet test          # 55 tests
+dotnet test          # 151 tests
 dotnet run --project src/SslReverseProxy.Api
 ```
 
-The first backend run seeds a bootstrap admin and prints a one-time API key to
-the log. In development you don't need to copy it: the UI claims it
-automatically on first load via `GET /api/bootstrap-key` (Development +
-loopback only, single claim) and signs you in. Full details in
-[server/README.md](server/README.md).
+The first backend run seeds a bootstrap admin and prints a one-time API key to the log. In development you don't need to copy it: the UI claims it automatically on first load via `GET /api/bootstrap-key` (Development + loopback only, single claim) and signs you in. Run it with `Seed__Demo=true` to fill a new Development database with sample servers, rules, certificates, users and audit entries. Full details in [server/README.md](server/README.md).

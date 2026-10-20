@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Server, Certificate, User, UserRole, LogEntry, CertificateStatus } from '../types';
+import { Server, ServerStatus, Certificate, User, UserRole, LogEntry, CertificateStatus } from '../types';
 import { api, Server as ApiServer, Rule as ApiRule } from '../services/apiClient';
 
 // --- adapters: backend DTO <-> frontend view shapes ---
@@ -13,6 +13,13 @@ const mapCertStatus = (s: string): CertificateStatus => {
     }
 };
 
+const serverStatus = (s: ApiServer): Pick<Server, 'status' | 'upstreamsUp' | 'upstreamsTotal' | 'statusCheckedAt'> => ({
+    status: (['active', 'inactive', 'error'].includes(s.status?.toLowerCase()) ? s.status.toLowerCase() : 'unknown') as ServerStatus,
+    upstreamsUp: s.upstreamsUp ?? 0,
+    upstreamsTotal: s.upstreamsTotal ?? 0,
+    statusCheckedAt: s.statusCheckedAt ?? null,
+});
+
 // Rules are carried through untouched: the detail pane has to echo every field
 // back on update, so narrowing them here would silently drop access control,
 // rate limits and basic auth on the next write.
@@ -22,6 +29,7 @@ const toServer = (s: ApiServer, rules: ApiRule[]): Server => ({
     host: s.host,
     os: (s.os === 'windows' ? 'windows' : 'linux'),
     ruleCount: s.ruleCount,
+    ...serverStatus(s),
     rules,
 });
 
@@ -79,6 +87,34 @@ const useApiData = (enabled: boolean) => {
     }, [enabled]);
 
     useEffect(() => { reload(); }, [reload]);
+
+    // Statuses only; rules and everything else stay as loaded.
+    const refreshStatuses = useCallback(async () => {
+        try {
+            const fresh = new Map((await api.servers.list()).map(s => [s.id, s]));
+            setServers(prev => prev.map(s => {
+                const f = fresh.get(s.id);
+                return f ? { ...s, ...serverStatus(f) } : s;
+            }));
+        } catch { /* the next event or reload tries again */ }
+    }, []);
+
+    // The control plane publishes server.health when a server's status changes.
+    // Statuses are refetched on open too, covering changes made before the stream connected.
+    useEffect(() => {
+        if (!enabled) return;
+        const abort = new AbortController();
+        let debounce: ReturnType<typeof setTimeout> | undefined;
+        let retry: ReturnType<typeof setTimeout> | undefined;
+        const schedule = () => { clearTimeout(debounce); debounce = setTimeout(refreshStatuses, 250); };
+        const connect = () => {
+            api.events(evt => { if (evt?.type === 'server.health') schedule(); }, abort.signal, schedule)
+                .catch(() => { /* aborted or dropped */ })
+                .finally(() => { if (!abort.signal.aborted) retry = setTimeout(connect, 5000); });
+        };
+        connect();
+        return () => { abort.abort(); clearTimeout(debounce); clearTimeout(retry); };
+    }, [enabled, refreshStatuses]);
 
     const addServer = useCallback(async (d: { name: string; ip: string; os: 'linux' | 'windows' }) => {
         await api.servers.create({ name: d.name, host: d.ip, os: d.os });

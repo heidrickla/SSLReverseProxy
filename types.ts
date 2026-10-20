@@ -4,7 +4,8 @@ import type { Rule } from './services/apiClient';
 
 export type View = 'dashboard' | 'proxy' | 'servers' | 'ssl' | 'users' | 'audit-log' | 'settings';
 
-export type ServerStatus = 'active' | 'inactive' | 'error';
+// From the control plane's background probe of each enabled rule's upstreams; 'unknown' until the first probe.
+export type ServerStatus = 'active' | 'inactive' | 'error' | 'unknown';
 export type CertificateStatus = 'valid' | 'expiring' | 'expired' | 'issuing';
 export type UserRole = 'Admin' | 'Editor' | 'Viewer';
 
@@ -14,6 +15,10 @@ export interface Server {
   host: string;
   os: 'linux' | 'windows';
   ruleCount: number;
+  status: ServerStatus;
+  upstreamsUp: number;
+  upstreamsTotal: number;
+  statusCheckedAt: string | null;
   // The API rule verbatim, not a trimmed-down view shape. Rule writes are
   // full replacements, so anything dropped here would be dropped on the next
   // PUT — see toPayload in components/ServerDetailPane.tsx.

@@ -50,6 +50,15 @@ public interface IProxyController
 
 public sealed record UpstreamHealth(bool Reachable, int? StatusCode, long? LatencyMs, string? Error);
 
+/// <summary>Server status kept by the background health monitor.</summary>
+public interface IServerHealthStore
+{
+    ServerHealth Get(Guid serverId);
+
+    /// <summary>Runs a probe cycle now instead of at the next interval.</summary>
+    void RequestCheck();
+}
+
 /// <summary>
 /// Probes a proxy upstream for reachability. MUST re-apply the SSRF policy before
 /// making any outbound request so the health check can't be abused as an SSRF

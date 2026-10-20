@@ -52,7 +52,9 @@ public sealed record CreateApiKeyRequest(Guid UserId, string Name, int? Lifetime
 public sealed record RollbackRequest(long SnapshotId);
 
 // Responses
-public sealed record ServerDto(Guid Id, string Name, string Host, string Os, int RuleCount);
+/// <summary>Status is the background monitor's last verdict: Unknown, Active, Inactive or Error.</summary>
+public sealed record ServerDto(Guid Id, string Name, string Host, string Os, int RuleCount,
+    string Status, int UpstreamsUp, int UpstreamsTotal, DateTimeOffset? StatusCheckedAt);
 public sealed record RuleHardeningDto
 {
     public string? AdditionalUpstreams { get; init; }
@@ -98,7 +100,8 @@ public sealed record ProxyStatusDto(string State, string Engine, int? ProcessId,
 
 public static class DtoMappings
 {
-    public static ServerDto ToDto(this ProxyServer s) => new(s.Id, s.Name, s.Host, s.Os, s.Rules?.Count ?? 0);
+    public static ServerDto ToDto(this ProxyServer s, ServerHealth h) =>
+        new(s.Id, s.Name, s.Host, s.Os, s.Rules?.Count ?? 0, h.Status.ToString(), h.UpstreamsUp, h.UpstreamsTotal, h.CheckedAt);
     public static RuleDto ToDto(this ProxyRule r) => new(r.Id, r.ServerId, r.Domain, r.UpstreamUrl, r.EnableTls, r.Enabled, r.AllowedCidrs, r.DeniedCidrs, r.RateLimitPerMinute, !string.IsNullOrEmpty(r.BasicAuthPasswordHash), r.BasicAuthUsername, r.ToHardeningDto(), r.Version);
 
     public static RuleHardeningDto ToHardeningDto(this ProxyRule r) => new()

@@ -145,9 +145,9 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
           <SectionHeader title="Key metrics" collapsed={isMetricsCollapsed} onToggle={() => setIsMetricsCollapsed(!isMetricsCollapsed)} />
           {!isMetricsCollapsed && (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-fade-in">
-              <DashboardCard title="Active servers" value={serverStats.active || 0} description="Healthy and running" onClick={() => setView('servers')} tone="success" icon={<ServerIcon className="w-5 h-5" />} />
-              <DashboardCard title="Inactive servers" value={serverStats.inactive || 0} description="Offline or stopped" onClick={() => setView('servers')} tone="muted" icon={<ServerIcon className="w-5 h-5" />} />
-              <DashboardCard title="Server errors" value={serverStats.error || 0} description="Require attention" onClick={() => setView('servers')} tone="danger" icon={<ServerIcon className="w-5 h-5" />} />
+              <DashboardCard title="Active servers" value={serverStats.active || 0} description="Every upstream answering" onClick={() => setView('servers')} tone="success" icon={<ServerIcon className="w-5 h-5" />} />
+              <DashboardCard title="Inactive servers" value={serverStats.inactive || 0} description="No enabled rules" onClick={() => setView('servers')} tone="muted" icon={<ServerIcon className="w-5 h-5" />} />
+              <DashboardCard title="Server errors" value={serverStats.error || 0} description="Upstreams not answering" onClick={() => setView('servers')} tone="danger" icon={<ServerIcon className="w-5 h-5" />} />
               <DashboardCard title="Valid certificates" value={certStats.valid || 0} description="Secure and up to date" onClick={() => setView('ssl')} tone="success" icon={<LockIcon className="w-5 h-5" />} />
               <DashboardCard title="Active connections" value="1,283" description="Live connections" icon={<ActiveConnectionsIcon className="w-5 h-5" />} />
               <DashboardCard title="Total requests" value="1.4M" description="Last 24 hours" icon={<TotalRequestsIcon className="w-5 h-5" />} aside={<Sparkline values={areaChartData.map(d => d.requests)} />} />

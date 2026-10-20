@@ -7,7 +7,8 @@
 // prefer terminating mTLS / injecting the key at an authenticating gateway so the
 // SPA never holds a long-lived credential. See server/README.md.
 
-const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'https://localhost:5001';
+// Empty means the page's own origin, with /api routed to the control plane by the edge (or Vite's proxy).
+const API_BASE: string = (import.meta as any).env?.VITE_API_BASE_URL ?? '';
 const KEY_STORAGE = 'sslrp-api-key';
 
 export const apiKeyStore = {
@@ -55,7 +56,12 @@ export interface ProxyStatus {
   state: ProxyState; engine: string; processId: number | null;
   startedAt: string | null; activeRuleCount: number; message: string | null;
 }
-export interface Server { id: string; name: string; host: string; os: string; ruleCount: number; }
+export interface Server {
+  id: string; name: string; host: string; os: string; ruleCount: number;
+  status: 'Unknown' | 'Active' | 'Inactive' | 'Error'; upstreamsUp: number; upstreamsTotal: number; statusCheckedAt: string | null;
+}
+/** A control-plane event from GET /api/events. */
+export interface ControlEvent { type: string; message: string; at: string; actor: string | null; }
 // Per-route hardening emitted into the Caddy config. Mirrors RuleHardeningDto.
 export interface RuleHardening {
   additionalUpstreams: string | null;
@@ -196,20 +202,22 @@ export const api = {
     return request<ApiAuditEntry[]>('GET', `/api/audit${qs ? `?${qs}` : ''}`);
   },
 
-  // Live event stream (SSE). Returns an EventSource-like reader via fetch.
-  events: (onEvent: (evt: unknown) => void, signal?: AbortSignal) =>
-    streamEvents(onEvent, signal),
+  // Live event stream (SSE). onOpen runs once the server has registered the
+  // subscriber, so state fetched from then on cannot miss a later event.
+  events: (onEvent: (evt: ControlEvent) => void, signal?: AbortSignal, onOpen?: () => void) =>
+    streamEvents(onEvent, signal, onOpen),
 };
 
 // Minimal SSE reader over fetch (EventSource can't send the X-Api-Key header).
-async function streamEvents(onEvent: (evt: unknown) => void, signal?: AbortSignal): Promise<void> {
+async function streamEvents(onEvent: (evt: ControlEvent) => void, signal?: AbortSignal, onOpen?: () => void): Promise<void> {
   const key = apiKeyStore.get();
   const res = await fetch(`${API_BASE}/api/events`, {
     headers: key ? { 'X-Api-Key': key } : {},
     credentials: 'omit',
     signal,
   });
-  if (!res.body) return;
+  if (!res.ok || !res.body) return;
+  onOpen?.();
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';

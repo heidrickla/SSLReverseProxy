@@ -6,6 +6,7 @@ import XIcon from './icons/XIcon';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import ProxyRuleModal, { ProxyRuleFormData } from './ProxyRuleModal';
 import ConfirmationModal from './ConfirmationModal';
+import ServerStatusBadge, { describeServerStatus } from './ServerStatusBadge';
 import { useAuth } from '../contexts/AuthContext';
 import { api, Rule, RuleInput } from '../services/apiClient';
 
@@ -105,6 +106,10 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                 <div className="mb-6 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-md bg-surface-raised px-2 py-1 text-on-surface-muted">Host <span className="text-on-surface tabular-nums">{server.host}</span></span>
                     <span className="rounded-md bg-surface-raised px-2 py-1 text-on-surface-muted">OS <span className="text-on-surface capitalize">{server.os}</span></span>
+                </div>
+                <div className="-mt-3 mb-6 flex items-center gap-2 text-xs text-on-surface-muted">
+                    <ServerStatusBadge server={server} />
+                    <span>{describeServerStatus(server)}</span>
                 </div>
 
                 <h4 className="text-sm font-semibold text-on-surface mb-3">Proxy rules</h4>

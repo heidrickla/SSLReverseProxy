@@ -71,11 +71,18 @@ public static class AdminEndpoints
         {
             ctx.Response.Headers.ContentType = "text/event-stream";
             ctx.Response.Headers.CacheControl = "no-cache";
-            await foreach (var evt in events.Subscribe(ctx.RequestAborted))
+
+            // The first MoveNextAsync registers the subscriber; doing it before the headers
+            // go out means a client that has the response cannot miss a later event.
+            await using var subscription = events.Subscribe(ctx.RequestAborted).GetAsyncEnumerator(ctx.RequestAborted);
+            var next = subscription.MoveNextAsync();
+            await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+            while (await next)
             {
-                var json = System.Text.Json.JsonSerializer.Serialize(evt);
+                var json = System.Text.Json.JsonSerializer.Serialize(subscription.Current, System.Text.Json.JsonSerializerOptions.Web);
                 await ctx.Response.WriteAsync($"data: {json}\n\n", ctx.RequestAborted);
                 await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+                next = subscription.MoveNextAsync();
             }
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead)).WithTags("Meta");
     }

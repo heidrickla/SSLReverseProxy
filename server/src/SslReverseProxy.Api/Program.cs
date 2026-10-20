@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using SslReverseProxy.Api.Auth;
 using SslReverseProxy.Api.Endpoints;
+using SslReverseProxy.Api.Health;
 using SslReverseProxy.Api.Security;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Infrastructure;
@@ -40,6 +41,10 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentPrincipal, CurrentPrincipal>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
+
+builder.Services.AddSingleton<ServerHealthMonitor>();
+builder.Services.AddSingleton<IServerHealthStore>(sp => sp.GetRequiredService<ServerHealthMonitor>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerHealthMonitor>());
 
 builder.Services.AddAuthentication(ApiKeyDefaults.Scheme)
     .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(ApiKeyDefaults.Scheme, _ => { });
@@ -136,7 +141,15 @@ app.MapProxyEndpoints();
 app.MapServerEndpoints();
 app.MapAdminEndpoints();
 
-await DbBootstrapper.InitializeAsync(app.Services);
+// Seed:Demo fills a new Development database with sample data, for screenshots and the browser smoke test.
+var seedDemo = app.Configuration.GetValue<bool>("Seed:Demo");
+if (seedDemo && !app.Environment.IsDevelopment())
+{
+    app.Logger.LogWarning("Seed:Demo is ignored outside Development.");
+    seedDemo = false;
+}
+await DbBootstrapper.InitializeAsync(app.Services,
+    seedDemo ? app.Configuration["Seed:DemoUpstreamBase"] ?? "http://127.0.0.1:5195" : null);
 
 app.Run();
 

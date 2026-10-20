@@ -85,4 +85,10 @@ public sealed class ProxyOptions
 
     /// <summary>How long rolled access logs are kept, in days.</summary>
     public int AccessLogKeepDays { get; set; } = 14;
+
+    /// <summary>
+    /// Seconds between background probes of every enabled rule's upstreams,
+    /// which set each server's status. 0 turns the monitor off.
+    /// </summary>
+    public int ServerHealthIntervalSeconds { get; set; } = 60;
 }
