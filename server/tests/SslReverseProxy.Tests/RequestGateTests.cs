@@ -295,26 +295,12 @@ public class RequestGateTests
         var big = new byte[RequestGate.DefaultBodyLimit + 1];
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge,
             (await anonymous.PostAsync("/api/servers", new ByteArrayContent(big))).StatusCode);
-        Assert.Equal(HttpStatusCode.RequestEntityTooLarge,
-            (await anonymous.PostAsync("/api/servers", new Unsized(big))).StatusCode);
 
         // The backup import declares a larger limit.
         var (admin, _) = f.WithKey();
         var backup = Encoding.UTF8.GetBytes(new string(' ', 3 * 512 * 1024) + "{}");
         Assert.Equal(HttpStatusCode.BadRequest,
-            (await admin.PostAsync("/api/backup/import/dry-run", new Unsized(backup))).StatusCode);
-    }
-
-    // A body sent without a Content-Length.
-    private sealed class Unsized(byte[] body) : HttpContent
-    {
-        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(body).AsTask();
-
-        protected override bool TryComputeLength(out long length)
-        {
-            length = 0;
-            return false;
-        }
+            (await admin.PostAsync("/api/backup/import/dry-run", new ByteArrayContent(backup))).StatusCode);
     }
 
     [Fact]
@@ -616,6 +602,18 @@ public class RequestWriteGuardTests : IDisposable
         {
             upload.Release();
         }
+    }
+
+    // The test server gives every body a Content-Length, so an undeclared one is tested here.
+    [Fact]
+    public async Task AnOversizedBodyWithoutALength_IsReadOnlyUpToTheCap()
+    {
+        var ctx = WithProblems(Request("POST"));
+        ctx.Request.Body = new MemoryStream(new byte[RequestGate.DefaultBodyLimit + 1]);
+        var ran = false;
+        await Gated(_ => { ran = true; return Task.CompletedTask; }, new RequestGate()).InvokeAsync(ctx);
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, ctx.Response.StatusCode);
+        Assert.False(ran);
     }
 
     [Fact]
