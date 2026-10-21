@@ -16,17 +16,29 @@ From the control plane's Development demo data (`Seed:Demo`): example domains an
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-| Proxy control | Servers |
+| Proxy control | Reload preview |
 | --- | --- |
-| ![Proxy control](docs/screenshots/proxy-control.png) | ![Servers](docs/screenshots/servers.png) |
+| ![Proxy control](docs/screenshots/proxy-control.png) | ![Reload preview](docs/screenshots/reload-preview.png) |
 
-| Proxy rules | SSL certificates |
+| Servers | Proxy rules |
 | --- | --- |
-| ![Proxy rules](docs/screenshots/proxy-rules.png) | ![SSL certificates](docs/screenshots/certificates.png) |
+| ![Servers](docs/screenshots/servers.png) | ![Proxy rules](docs/screenshots/proxy-rules.png) |
 
-| Users | Audit log |
+| Recent requests to a rule | Sign-in on a rule |
 | --- | --- |
-| ![Users](docs/screenshots/users.png) | ![Audit log](docs/screenshots/audit-log.png) |
+| ![Recent requests to a rule](docs/screenshots/recent-requests.png) | ![Sign-in on a rule](docs/screenshots/rule-sign-in.png) |
+
+| API keys | New API key |
+| --- | --- |
+| ![API keys](docs/screenshots/api-keys.png) | ![New API key](docs/screenshots/api-key-new.png) |
+
+| SSL certificates | Users |
+| --- | --- |
+| ![SSL certificates](docs/screenshots/certificates.png) | ![Users](docs/screenshots/users.png) |
+
+| Backup | Audit log |
+| --- | --- |
+| ![Backup](docs/screenshots/backup.png) | ![Audit log](docs/screenshots/audit-log.png) |
 
 ## Run locally
 
