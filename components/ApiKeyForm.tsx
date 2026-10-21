@@ -16,8 +16,6 @@ interface ApiKeyFormProps {
   /** The signed-in principal's effective permissions. */
   caller: { permissions: string[] };
   rotating?: ApiKey;
-  /** The rotated key's owner, when known; else the form assumes every permission and the server checks. */
-  rotatingOwner?: KeyOwner;
   onCancel: () => void;
   onIssued: (issued: IssuedApiKey) => void;
   now?: () => Date;
@@ -42,7 +40,7 @@ const Choice: React.FC<{ selected: boolean; disabled?: boolean; title?: string; 
 );
 
 const ApiKeyForm: React.FC<ApiKeyFormProps> = ({
-  options, owners, defaultOwnerId, caller, rotating, rotatingOwner, onCancel, onIssued, now = () => new Date(),
+  options, owners, defaultOwnerId, caller, rotating, onCancel, onIssued, now = () => new Date(),
 }) => {
   const [ownerId, setOwnerId] = useState(rotating?.userId ?? defaultOwnerId);
   const [name, setName] = useState('');
@@ -50,15 +48,14 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({
     rotating ? keptLifetime(rotating, options, now()) : { kind: 'days', days: options.defaultLifetimeDays });
   const [selection, setSelection] = useState<Selection>(() => {
     if (!rotating) return { kind: 'preset', id: options.presets[0]?.id ?? 'full' };
-    const role = (rotatingOwner ?? { role: 'Admin' }).role;
-    const preset = matchPreset(rotating.scopes, options.presets, options.roles[role]);
+    const preset = matchPreset(rotating.scopes, options.presets, options.roles[rotating.userRole]);
     return preset ? { kind: 'preset', id: preset.id } : { kind: 'custom', scopes: rotating.scopes ?? [] };
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const owner: KeyOwner | undefined = rotating
-    ? rotatingOwner ?? { id: rotating.userId, name: rotating.userName, role: 'Admin' }
+    ? { id: rotating.userId, name: rotating.userName, role: rotating.userRole }
     : owners.find(o => o.id === ownerId);
   const ownerPermissions = owner ? options.roles[owner.role] ?? [] : [];
   const ownerFacts = { name: owner?.name ?? '', role: owner?.role ?? '', permissions: ownerPermissions };

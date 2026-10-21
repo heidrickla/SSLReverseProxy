@@ -154,23 +154,33 @@ describe('ApiKeyForm', () => {
   it('rotates a key holding its owner\'s whole role as full access', async () => {
     mocks.rotate.mockResolvedValue({ id: 'k2', name: 'All', token: 't', expiresAt: null, scopes: all });
     const key: ApiKey = {
-      id: 'k1', name: 'All', prefix: 'abcd', userId: 'u-viewer', userName: 'Guest', createdAt: '2026-10-14T12:00:00Z',
+      id: 'k1', name: 'All', prefix: 'abcd', userId: 'u-viewer', userName: 'Guest', userRole: 'Viewer', createdAt: '2026-10-14T12:00:00Z',
       expiresAt: '2026-10-21T12:00:00Z', revokedAt: null, lastUsedAt: null, scopes: ['AuditRead', 'CertRead', 'ServerRead'],
     };
-    renderForm({ rotating: key, rotatingOwner: owners[1] });
+    renderForm({ rotating: key });
     expect(radio('Scope', 'Full access').getAttribute('aria-checked')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Rotate key' }));
     await waitFor(() => expect(mocks.rotate).toHaveBeenCalledWith('k1', { lifetimeDays: 7, scopes: null }));
   });
 
+  it('grants a rotated key from its owner\'s role when the caller cannot read users', () => {
+    const key: ApiKey = {
+      id: 'k1', name: 'Guest', prefix: 'abcd', userId: 'u-viewer', userName: 'Guest', userRole: 'Viewer', createdAt: '2026-10-14T12:00:00Z',
+      expiresAt: '2026-10-21T12:00:00Z', revokedAt: null, lastUsedAt: null, scopes: ['ServerRead'],
+    };
+    renderForm({ owners: [owners[0]], caller: { permissions: ['ServerRead', 'ApiKeyManage'] }, rotating: key });
+    fireEvent.click(radio('Scope', 'Full access'));
+    expect(granted()).toEqual(['Read servers, rules and traffic']);
+  });
+
   it('rotates with the old key\'s scope and lifetime selected', async () => {
     mocks.rotate.mockResolvedValue({ id: 'k2', name: 'HA', token: 't', expiresAt: null, scopes: null });
     const key: ApiKey = {
-      id: 'k1', name: 'HA', prefix: 'abcd', userId: 'u-admin', userName: 'Lewis', createdAt: '2026-07-23T12:00:00Z',
+      id: 'k1', name: 'HA', prefix: 'abcd', userId: 'u-admin', userName: 'Lewis', userRole: 'Admin', createdAt: '2026-07-23T12:00:00Z',
       expiresAt: '2026-10-21T12:00:00Z', revokedAt: null, lastUsedAt: null,
       scopes: ['ServerRead', 'CertRead', 'ProxyReload', 'CertRenew'],
     };
-    renderForm({ rotating: key, rotatingOwner: owners[0] });
+    renderForm({ rotating: key });
     expect(screen.queryByLabelText('Name')).toBeNull();
     expect(radio('Scope', 'Home Assistant').getAttribute('aria-checked')).toBe('true');
     expect(radio('Expires after', '90 days').getAttribute('aria-checked')).toBe('true');

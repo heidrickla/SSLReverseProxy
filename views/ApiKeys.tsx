@@ -174,7 +174,6 @@ const ApiKeys: React.FC = () => {
             defaultOwnerId={currentUser.id}
             caller={caller}
             rotating={dialog.kind === 'rotate' ? dialog.key : undefined}
-            rotatingOwner={dialog.kind === 'rotate' ? owners.find(o => o.id === dialog.key.userId) : undefined}
             onCancel={() => setDialog(null)}
             onIssued={r => void issued(r, dialog.kind === 'rotate')}
           />

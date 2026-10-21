@@ -409,6 +409,20 @@ public class ApiKeyScopeTests : IDisposable
         Assert.NotNull(row["lastUsedAt"]);
         Assert.Null(row["token"]);
     }
+
+    [Fact]
+    public async Task TheKeyList_CarriesEachOwnersCurrentRole()
+    {
+        var (admin, _) = _factory.WithKey();
+        var viewer = NewUser(Role.Viewer);
+        var issued = await Issue(admin, viewer, new[] { "ServerRead" });
+        async Task<string> OwnerRole() => (string)(await Json(await admin.GetAsync("/api/apikeys"))).AsArray()
+            .Single(k => (string)k!["id"]! == (string)issued["id"]!)!["userRole"]!;
+
+        Assert.Equal("Viewer", await OwnerRole());
+        _factory.Db(db => db.Users.Where(u => u.Id == viewer).ExecuteUpdate(s => s.SetProperty(u => u.Role, Role.Editor)));
+        Assert.Equal("Editor", await OwnerRole());
+    }
 }
 
 public class ApiKeyScopeUnitTests

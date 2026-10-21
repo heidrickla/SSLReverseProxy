@@ -313,7 +313,7 @@ Token `srp.<prefix>.<secret>`, sent as `X-Api-Key` or `Authorization: Bearer`. A
 
 | Endpoint | |
 | --- | --- |
-| `GET /api/apikeys` | Keys, newest first, with owner, scopes, expiry, last use and revocation. `userId` filters. |
+| `GET /api/apikeys` | Keys, newest first, with owner, the owner's current role, scopes, expiry, last use and revocation. `userId` filters. |
 | `GET /api/apikeys/options` | Lifetime presets in days, the default and maximum, scope presets, every permission, and each role's permissions. |
 | `POST /api/apikeys` | `{userId, name, lifetimeDays \| expiresAt, scopes}` returns the token once. 400 for `lifetimeDays` off the list, an `expiresAt` past 365 days, an unknown or empty scope list, or a scope the owner's role lacks; 403 for a scope the caller lacks, or full access from a caller holding none of the owner's role. |
 | `POST /api/apikeys/{id}/rotate` | Issues a new key for the same owner and name and revokes the old one in one transaction. A body chooses lifetime and scopes as on create; no body keeps the old ones, the lifetime in whole days (a non-expiring key needs a body). 409 for a revoked key. |

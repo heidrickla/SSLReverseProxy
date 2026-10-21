@@ -165,8 +165,11 @@ public sealed record SessionDto(string CsrfToken, DateTimeOffset ExpiresAt);
 public sealed record PasskeyDto(Guid Id, string Name, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt, bool BackedUp);
 public sealed record AlertDeliveryDto(string Target, bool Delivered, int? Status, string? Error, int Attempts);
 public sealed record UserDto(Guid Id, string Name, string Email, string Role, bool IsActive, DateTimeOffset? LastSeenAt);
-/// <summary>Null Scopes: the bootstrap key, or a key issued before full access was stored as a list; it follows its owner's role.</summary>
-public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, Guid UserId, string UserName, DateTimeOffset CreatedAt,
+/// <summary>
+/// UserRole is the owner's current role. Null Scopes: the bootstrap key, or a key issued before full access was
+/// stored as a list; it follows its owner's role.
+/// </summary>
+public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, Guid UserId, string UserName, string UserRole, DateTimeOffset CreatedAt,
     DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, string[]? Scopes);
 public sealed record IssuedApiKeyDto(Guid Id, string Name, string Token, DateTimeOffset? ExpiresAt, string[]? Scopes);
 public sealed record ApiKeyPresetDto(string Id, string Name, string Description, string[]? Scopes);
@@ -227,7 +230,7 @@ public static class DtoMappings
     }
     public static UserDto ToDto(this User u) => new(u.Id, u.Name, u.Email, u.Role.ToString(), u.IsActive, u.LastSeenAt);
     public static ApiKeyDto ToDto(this ApiKey k) => new(k.Id, k.Name, k.Prefix, k.UserId, k.User?.Name ?? "",
-        k.CreatedAt, k.ExpiresAt, k.RevokedAt, k.LastUsedAt, ScopeNames(k.Scopes));
+        k.User?.Role.ToString() ?? "", k.CreatedAt, k.ExpiresAt, k.RevokedAt, k.LastUsedAt, ScopeNames(k.Scopes));
 
     /// <summary>A key's stored scopes as names in permission order, or null when it follows its owner's role.</summary>
     public static string[]? ScopeNames(string? stored) =>

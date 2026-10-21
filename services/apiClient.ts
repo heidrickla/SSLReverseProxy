@@ -159,9 +159,9 @@ export interface WhoAmI {
   userId: string | null; name: string; role: string; permissions: string[]; wholeRole: boolean;
   key?: { id: string; name: string; expiresAt: string | null; scopes: string[] | null } | null;
 }
-/** Null `scopes`: the bootstrap key, or one issued before full access was stored as a list; it follows its owner's role. */
+/** `userRole`: the owner's current role. Null `scopes`: the bootstrap key, or one issued before full access was stored as a list; it follows its owner's role. */
 export interface ApiKey {
-  id: string; name: string; prefix: string; userId: string; userName: string; createdAt: string;
+  id: string; name: string; prefix: string; userId: string; userName: string; userRole: string; createdAt: string;
   expiresAt: string | null; revokedAt: string | null; lastUsedAt: string | null; scopes: string[] | null;
 }
 export interface IssuedApiKey { id: string; name: string; token: string; expiresAt: string | null; scopes: string[] | null; }
