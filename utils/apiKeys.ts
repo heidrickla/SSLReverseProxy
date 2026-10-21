@@ -1,4 +1,5 @@
-import type { ApiKey, ApiKeyPreset } from '../services/apiClient';
+import type { ApiKey, ApiKeyOptions, ApiKeyPreset } from '../services/apiClient';
+import { permissionLabel } from './permissions';
 
 const DAY_MS = 86_400_000;
 
@@ -60,6 +61,15 @@ export const matchPreset = (scopes: string[] | null, presets: ApiKeyPreset[], ro
   presets.find(p => p.scopes === null
     ? scopes === null || (rolePermissions !== undefined && sameSet(scopes, rolePermissions))
     : scopes !== null && sameSet(p.scopes, scopes)) ?? null;
+
+/** How the key list names a key's scope: its preset by the owner's current role, else a count of permissions. */
+export const keyScopeText = (key: ApiKey, options: ApiKeyOptions | null): { text: string; title: string } => {
+  const preset = options ? matchPreset(key.scopes, options.presets, options.roles[key.userRole]) : null;
+  const title = key.scopes ? key.scopes.map(permissionLabel).join(', ') : 'Everything the owner\'s role allows';
+  if (preset) return { text: preset.name, title };
+  if (!key.scopes) return { text: 'Full access', title };
+  return { text: `Custom, ${key.scopes.length} permission${key.scopes.length === 1 ? '' : 's'}`, title };
+};
 
 export type KeyState = 'active' | 'expiring' | 'expired' | 'revoked';
 

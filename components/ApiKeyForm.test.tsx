@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ApiKey, ApiKeyOptions } from '../services/apiClient';
 import ApiKeyForm from './ApiKeyForm';
-import { expiresIn, expiryFor, keptLifetime, keyState, matchPreset, scopeProblem } from '../utils/apiKeys';
+import { expiresIn, expiryFor, keptLifetime, keyScopeText, keyState, matchPreset, scopeProblem } from '../utils/apiKeys';
 
 const mocks = vi.hoisted(() => ({ create: vi.fn(), rotate: vi.fn() }));
 
@@ -191,6 +191,15 @@ describe('ApiKeyForm', () => {
 });
 
 describe('api key helpers', () => {
+  it('names a listed key\'s scope by the owner role the key carries', () => {
+    const key: ApiKey = {
+      id: 'k1', name: 'All', prefix: 'abcd', userId: 'u-viewer', userName: 'Guest', userRole: 'Viewer', createdAt: '2026-10-14T12:00:00Z',
+      expiresAt: null, revokedAt: null, lastUsedAt: null, scopes: ['AuditRead', 'CertRead', 'ServerRead'],
+    };
+    expect(keyScopeText(key, options).text).toBe('Full access');
+    expect(keyScopeText({ ...key, userRole: 'Editor' }, options).text).toBe('Custom, 3 permissions');
+  });
+
   it('holds a picked date inside the limit and refuses the past', () => {
     expect(expiryFor({ kind: 'date', date: '2030-01-01' }, NOW, 365)!.getTime()).toBe(NOW.getTime() + 365 * 86_400_000 - 60_000);
     expect(expiryFor({ kind: 'date', date: '2026-10-01' }, NOW, 365)).toBeNull();

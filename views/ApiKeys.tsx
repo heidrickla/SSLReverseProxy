@@ -4,44 +4,18 @@ import Modal from '../components/Modal';
 import ConfirmationModal from '../components/ConfirmationModal';
 import EmptyState from '../components/EmptyState';
 import ApiKeyForm, { KeyOwner } from '../components/ApiKeyForm';
+import IssuedKeyPanel from '../components/IssuedKeyPanel';
 import KeyIcon from '../components/icons/KeyIcon';
 import { ApiKey, ApiKeyOptions, IssuedApiKey, api, apiErrorMessage } from '../services/apiClient';
 import { useAuth } from '../contexts/AuthContext';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
-import { KeyState, expiresIn, keyState, matchPreset } from '../utils/apiKeys';
-import { permissionLabel } from '../utils/permissions';
+import { KeyState, expiresIn, keyScopeText, keyState } from '../utils/apiKeys';
 
 const stateStyle: Record<KeyState, string> = {
   active: 'bg-success/15 text-success',
   expiring: 'bg-warning/15 text-warning',
   expired: 'bg-on-surface-muted/15 text-on-surface-muted',
   revoked: 'bg-danger/15 text-danger',
-};
-
-const IssuedKeyPanel: React.FC<{ issued: IssuedApiKey; onDone: () => void }> = ({ issued, onDone }) => {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(issued.token);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-on-surface-muted">Copy the key now. It is not shown again.</p>
-      <input readOnly aria-label="Issued key" value={issued.token} onFocus={e => e.target.select()}
-        className="field font-mono text-xs" />
-      <p className="text-xs text-on-surface-muted">
-        {issued.expiresAt ? `Expires ${new Date(issued.expiresAt).toLocaleString()}.` : 'Does not expire.'}
-      </p>
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="secondary" onClick={copy}>{copied ? 'Copied' : 'Copy'}</Button>
-        <Button type="button" onClick={onDone}>Done</Button>
-      </div>
-    </div>
-  );
 };
 
 type Dialog = { kind: 'create' } | { kind: 'rotate'; key: ApiKey } | { kind: 'issued'; issued: IssuedApiKey; rotated: boolean };
@@ -93,14 +67,6 @@ const ApiKeys: React.FC = () => {
     await load();
   };
 
-  const scopeText = (key: ApiKey): { text: string; title: string } => {
-    const ownerRole = owners.find(o => o.id === key.userId)?.role;
-    const preset = options ? matchPreset(key.scopes, options.presets, ownerRole ? options.roles[ownerRole] : undefined) : null;
-    const title = key.scopes ? key.scopes.map(permissionLabel).join(', ') : 'Everything the owner\'s role allows';
-    if (preset) return { text: preset.name, title };
-    return { text: `Custom, ${key.scopes!.length} permission${key.scopes!.length === 1 ? '' : 's'}`, title };
-  };
-
   return (
     <div className="gap-6 h-full flex flex-col">
       <div className="flex justify-between items-center shrink-0 gap-4">
@@ -137,7 +103,7 @@ const ApiKeys: React.FC = () => {
             <tbody>
               {visible.map(k => {
                 const state = keyState(k, now);
-                const scope = scopeText(k);
+                const scope = keyScopeText(k, options);
                 return (
                   <tr key={k.id}>
                     <td className="text-on-surface font-medium">
