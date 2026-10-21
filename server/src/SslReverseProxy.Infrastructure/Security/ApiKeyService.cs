@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
 using SslReverseProxy.Core.Security;
@@ -33,6 +34,15 @@ public sealed class ApiKeyService : IApiKeyService
     public async Task<IssuedApiKey> CreateAsync(Guid userId, string name, DateTimeOffset? expiresAt,
         IReadOnlyCollection<Permission>? scopes = null, CancellationToken ct = default)
     {
+        // A user change commits before this read or after the insert: SQLite holds the write lock from BEGIN.
+        await using IDbContextTransaction? own =
+            _db.Database.CurrentTransaction is null ? await _db.Database.BeginTransactionAsync(ct) : null;
+        var owner = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (owner is not { IsActive: true })
+            throw new ApiKeyIssueRefusedException("The owner is inactive or gone; a key is issued only to an active user.");
+        if (scopes is not null && !scopes.All(Permissions.For(owner.Role).Contains))
+            throw new ApiKeyIssueRefusedException($"{owner.Name}'s role no longer holds every permission asked for.");
+
         var prefix = Base64Url(RandomNumberGenerator.GetBytes(PrefixBytes));
         var secret = Base64Url(RandomNumberGenerator.GetBytes(SecretBytes));
         var (hash, salt, iterations) = _hasher.Hash(secret);
@@ -53,6 +63,7 @@ public sealed class ApiKeyService : IApiKeyService
 
         _db.ApiKeys.Add(record);
         await _db.SaveChangesAsync(ct);
+        if (own is not null) await own.CommitAsync(ct);
 
         var token = $"{TokenScheme}.{prefix}.{secret}";
         return new IssuedApiKey(record, token);

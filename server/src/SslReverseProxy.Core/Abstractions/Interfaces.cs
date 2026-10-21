@@ -109,11 +109,16 @@ public interface IApiKeyHasher
 
 public sealed record IssuedApiKey(ApiKey Record, string PlaintextToken);
 
+/// <summary>The owner, read under the write lock, may not hold the key asked for.</summary>
+public sealed class ApiKeyIssueRefusedException(string message) : Exception(message);
+
 public interface IApiKeyService
 {
     /// <summary>
     /// Create a new key; the plaintext token is returned once and never persisted. Null scopes follow the
     /// owner's role, which only the bootstrap key is issued with; callers check that scopes and expiry are allowed.
+    /// The owner is read and the key inserted in one write transaction (the caller's, or its own), and an
+    /// inactive owner or scopes beyond the owner's role throw ApiKeyIssueRefusedException.
     /// </summary>
     Task<IssuedApiKey> CreateAsync(Guid userId, string name, DateTimeOffset? expiresAt,
         IReadOnlyCollection<Permission>? scopes = null, CancellationToken ct = default);

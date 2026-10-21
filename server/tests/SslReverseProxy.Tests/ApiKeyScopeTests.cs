@@ -1,7 +1,9 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using SslReverseProxy.Api.Health;
@@ -453,6 +455,121 @@ public class ApiKeyScopeTests : IDisposable
         Assert.Equal(HttpStatusCode.BadRequest, create.StatusCode);
         var rotate = await admin.PostAsync($"/api/apikeys/{(string)issued["id"]!}/rotate", null);
         Assert.Equal(HttpStatusCode.BadRequest, rotate.StatusCode);
+    }
+
+    private static readonly string[] AdminOnly = ["ServerRead", "UserWrite"];
+
+    private static Guid NewAdmin(PasskeyFactory factory) => factory.Db(db =>
+    {
+        var u = new User { Name = "Owner", Email = $"{Guid.NewGuid():N}@example.com", Role = Role.Admin };
+        db.Users.Add(u);
+        db.SaveChanges();
+        return u.Id;
+    });
+
+    // Deactivation, then demotion out of the role the asked-for scopes need.
+    public static TheoryData<bool, string> OwnerChanges => new() { { false, "Admin" }, { true, "Viewer" } };
+
+    [Theory]
+    [MemberData(nameof(OwnerChanges))]
+    public async Task AChangeToTheOwnerWaitsWhileItsKeyIsIssued(bool active, string role)
+    {
+        var gate = new StepGate();
+        using var factory = new PasskeyFactory(interceptor: gate);
+        var (admin, _) = factory.WithKey();
+        var owner = NewAdmin(factory);
+
+        gate.HoldUserRead(2); // the service's read, after the endpoint's
+        var create = admin.PostAsJsonAsync("/api/apikeys",
+            new { userId = owner, name = "racing", lifetimeDays = 30, scopes = AdminOnly });
+        await gate.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+        var change = admin.PutAsJsonAsync($"/api/users/{owner}", new { name = "Owner", role, isActive = active });
+        var first = await Task.WhenAny(change, Task.Delay(TimeSpan.FromSeconds(1)));
+        gate.Release();
+
+        Assert.False(first == change, "the owner changed between the service's read and the key insert");
+        Assert.Equal(HttpStatusCode.Created, (await create).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await change).StatusCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(OwnerChanges))]
+    public async Task AChangeToTheOwnerAfterTheEndpointReadIsRefusedAtIssue(bool active, string role)
+    {
+        var gate = new StepGate();
+        using var factory = new PasskeyFactory(interceptor: gate);
+        var (admin, _) = factory.WithKey();
+        var owner = NewAdmin(factory);
+
+        gate.HoldTransactionAfterUserRead(); // the service's write transaction, after the endpoint's read
+        var create = admin.PostAsJsonAsync("/api/apikeys",
+            new { userId = owner, name = "racing", lifetimeDays = 30, scopes = AdminOnly });
+        await gate.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+        var change = await admin.PutAsJsonAsync($"/api/users/{owner}", new { name = "Owner", role, isActive = active });
+        Assert.Equal(HttpStatusCode.OK, change.StatusCode);
+        gate.Release();
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await create).StatusCode);
+        Assert.Equal(0, factory.Db(db => db.ApiKeys.Count(k => k.UserId == owner)));
+    }
+
+    [Fact]
+    public async Task TheKeyServiceIssuesOnlyToAnActiveOwnerWithinTheOwnersRole()
+    {
+        var viewer = NewUser(Role.Viewer);
+        var inactive = NewUser(Role.Admin);
+        _factory.Db(db => db.Users.Where(u => u.Id == inactive).ExecuteUpdate(s => s.SetProperty(u => u.IsActive, false)));
+        using var scope = _factory.Services.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<IApiKeyService>();
+
+        await Assert.ThrowsAsync<ApiKeyIssueRefusedException>(() => svc.CreateAsync(inactive, "k", null));
+        await Assert.ThrowsAsync<ApiKeyIssueRefusedException>(() => svc.CreateAsync(Guid.NewGuid(), "k", null));
+        await Assert.ThrowsAsync<ApiKeyIssueRefusedException>(
+            () => svc.CreateAsync(viewer, "k", null, [Permission.ServerRead, Permission.UserWrite]));
+        Assert.Equal(0, _factory.Db(db => db.ApiKeys.Count(k => k.UserId == viewer || k.UserId == inactive)));
+        await svc.CreateAsync(viewer, "k", null, [Permission.ServerRead]);
+    }
+}
+
+/// <summary>Holds one database step of a request until Release: the Nth read of a user by id, or the first
+/// transaction started after a read of a user by id.</summary>
+internal sealed class StepGate : IDbCommandInterceptor, IDbTransactionInterceptor
+{
+    private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _readsLeft = -1;
+    private int _transactionArmed;
+    private int _userReadSeen;
+
+    public Task Reached => _reached.Task;
+    public void HoldUserRead(int nth) => Volatile.Write(ref _readsLeft, nth);
+    public void HoldTransactionAfterUserRead() => Volatile.Write(ref _transactionArmed, 1);
+    public void Release() => _release.TrySetResult();
+
+    public async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+        CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+    {
+        var sql = command.CommandText;
+        if (sql.Contains("FROM \"Users\" AS \"u\"") && sql.Contains("WHERE \"u\".\"Id\" ="))
+        {
+            if (Volatile.Read(ref _transactionArmed) == 1) Volatile.Write(ref _userReadSeen, 1);
+            if (Interlocked.Decrement(ref _readsLeft) == 0) await Hold();
+        }
+        return result;
+    }
+
+    public async ValueTask<InterceptionResult<DbTransaction>> TransactionStartingAsync(DbConnection connection,
+        TransactionStartingEventData eventData, InterceptionResult<DbTransaction> result,
+        CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _userReadSeen) == 1 && Interlocked.Exchange(ref _transactionArmed, 0) == 1) await Hold();
+        return result;
+    }
+
+    private async Task Hold()
+    {
+        _reached.TrySetResult();
+        await _release.Task.WaitAsync(TimeSpan.FromSeconds(30));
     }
 }
 

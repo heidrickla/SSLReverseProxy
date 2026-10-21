@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -123,7 +124,8 @@ internal sealed class SoftAuthenticator
     }
 }
 
-internal sealed class PasskeyFactory(bool enabled = true, int signInsPerMinute = 1000) : WebApplicationFactory<Program>
+internal sealed class PasskeyFactory(bool enabled = true, int signInsPerMinute = 1000, IInterceptor? interceptor = null)
+    : WebApplicationFactory<Program>
 {
     public const string RpId = "localhost";
     public const string Origin = "http://localhost:4173";
@@ -163,6 +165,7 @@ internal sealed class PasskeyFactory(bool enabled = true, int signInsPerMinute =
             s.RemoveAll<IHostedService>();
             s.RemoveAll<TimeProvider>();
             s.AddSingleton<TimeProvider>(Clock);
+            if (interceptor is not null) s.ConfigureDbContext<AppDbContext>(o => o.AddInterceptors(interceptor));
         });
 
     protected override IHost CreateHost(IHostBuilder builder)

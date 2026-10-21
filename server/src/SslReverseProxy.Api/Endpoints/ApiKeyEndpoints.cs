@@ -61,7 +61,10 @@ public static class ApiKeyEndpoints
                 out var expiresAt, out var scopes);
             if (refusal is not null) return refusal;
 
-            var issued = await svc.CreateAsync(owner.Id, name, expiresAt, scopes, ct);
+            // The service checks the owner again under the write lock; a change since the read above is refused here.
+            IssuedApiKey issued;
+            try { issued = await svc.CreateAsync(owner.Id, name, expiresAt, scopes, ct); }
+            catch (ApiKeyIssueRefusedException e) { return Invalid("userId", e.Message); }
             await audit.AuditAsync(me, ctx, "Create API Key", "API Key", issued.Record.Name,
                 details: Describe(owner, issued.Record));
             // The plaintext token is returned here once and never persisted or shown again.
