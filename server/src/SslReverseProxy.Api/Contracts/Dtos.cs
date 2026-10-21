@@ -54,8 +54,21 @@ public sealed record RuleRoutingRequest
     public bool? StripPathPrefix { get; init; }
 }
 
-public sealed record CreateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null, RuleRoutingRequest? Routing = null);
-public sealed record UpdateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null, RuleRoutingRequest? Routing = null);
+/// <summary>
+/// Sign-in through an identity provider. Null on a write leaves the rule's sign-in as it is; a block replaces it,
+/// and a block with no provider removes it. VerifierUrl is the provider's address for authelia, authentik and
+/// oauth2-proxy; TeamDomain and Audience are the Cloudflare Access application's.
+/// </summary>
+public sealed record RuleSignInRequest
+{
+    public string? Provider { get; init; }
+    public string? VerifierUrl { get; init; }
+    public string? TeamDomain { get; init; }
+    public string? Audience { get; init; }
+}
+
+public sealed record CreateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null, RuleRoutingRequest? Routing = null, RuleSignInRequest? SignIn = null);
+public sealed record UpdateRuleRequest(string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, string? BasicAuthUsername, string? BasicAuthPassword, RuleHardeningRequest? Hardening = null, RuleRoutingRequest? Routing = null, RuleSignInRequest? SignIn = null);
 public sealed record ToggleRuleRequest(bool Enabled);
 public sealed record CreateUserRequest(string Name, string Email, Role Role);
 public sealed record UpdateUserRequest(string Name, Role Role, bool IsActive);
@@ -101,7 +114,8 @@ public sealed record RuleHardeningDto
 }
 
 public sealed record RuleRoutingDto(string? PathPrefix, bool StripPathPrefix);
-public sealed record RuleDto(Guid Id, Guid ServerId, string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, bool BasicAuthEnabled, string? BasicAuthUsername, RuleHardeningDto Hardening, RuleRoutingDto Routing, int Version);
+public sealed record RuleSignInDto(string Provider, string? VerifierUrl, string? TeamDomain, string? Audience);
+public sealed record RuleDto(Guid Id, Guid ServerId, string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, bool BasicAuthEnabled, string? BasicAuthUsername, RuleHardeningDto Hardening, RuleRoutingDto Routing, int Version, RuleSignInDto? SignIn = null);
 public sealed record ProxyValidationDto(bool Valid, IReadOnlyList<string> Issues, bool EngineValidated);
 /// <summary>Kind is added, removed or changed. Credential fields show as [masked].</summary>
 public sealed record ConfigChangeDto(string Group, string Kind, string Path, string? Before, string? After);
@@ -173,7 +187,8 @@ public static class DtoMappings
 
     public static ServerDto ToDto(this ProxyServer s, ServerHealth h) =>
         new(s.Id, s.Name, s.Host, s.Os, s.Rules?.Count ?? 0, h.Status.ToString(), h.UpstreamsUp, h.UpstreamsTotal, h.CheckedAt);
-    public static RuleDto ToDto(this ProxyRule r) => new(r.Id, r.ServerId, r.Domain, r.UpstreamUrl, r.EnableTls, r.Enabled, r.AllowedCidrs, r.DeniedCidrs, r.RateLimitPerMinute, !string.IsNullOrEmpty(r.BasicAuthPasswordHash), r.BasicAuthUsername, r.ToHardeningDto(), new RuleRoutingDto(r.PathPrefix, r.StripPathPrefix), r.Version);
+    public static RuleDto ToDto(this ProxyRule r) => new(r.Id, r.ServerId, r.Domain, r.UpstreamUrl, r.EnableTls, r.Enabled, r.AllowedCidrs, r.DeniedCidrs, r.RateLimitPerMinute, !string.IsNullOrEmpty(r.BasicAuthPasswordHash), r.BasicAuthUsername, r.ToHardeningDto(), new RuleRoutingDto(r.PathPrefix, r.StripPathPrefix), r.Version,
+        r.SignInProvider is { } p ? new RuleSignInDto(p, r.SignInVerifierUrl, r.CloudflareTeamDomain, r.CloudflareAudience) : null);
 
     public static RuleHardeningDto ToHardeningDto(this ProxyRule r) => new()
     {

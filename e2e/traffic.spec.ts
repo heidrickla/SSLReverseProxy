@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
+import http from 'node:http';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { caddyPath } from '../playwright.config';
-import { controlPlane, openView, proxyGet, sendDemoTraffic, signIn } from './session';
+import { caddyPath, signInStubPort } from '../playwright.config';
+import { controlPlane, openView, proxyGet, proxyRequest, sendDemoTraffic, signIn } from './session';
 
 // CI sets SSLRP_REQUIRE_CADDY=1, so a missing binary fails these instead of skipping them.
 test.skip(!caddyPath && process.env.SSLRP_REQUIRE_CADDY !== '1', 'set SSLRP_TEST_CADDY to run the proxy');
@@ -106,7 +108,110 @@ test.describe.serial('the running proxy', () => {
     await expect(rows.first()).toContainText('/api/health');
     await expect(rows.first()).toContainText('200');
   });
+
+  test('rules sign in through their identity provider', async ({ page }) => {
+    const stub = signInStub();
+    await new Promise<void>(resolve => stub.server.listen(signInStubPort, '127.0.0.1', resolve));
+    try {
+      const server = await (await api.post('/api/servers', { data: { name: 'Sign-in', host: '192.0.2.44', os: 'linux' } })).json();
+      const verifier = `http://127.0.0.1:${signInStubPort}`;
+      const add = async (domain: string, signIn: object) => {
+        const r = await api.post(`/api/servers/${server.id}/rules`, { data: { domain, upstreamUrl: verifier, enableTls: false, enabled: true, signIn } });
+        expect(r.status(), await r.text()).toBe(201);
+      };
+      await add('authelia.example.com', { provider: 'authelia', verifierUrl: verifier });
+      await add('oauth2.example.com', { provider: 'oauth2-proxy', verifierUrl: verifier });
+      await add('cf.example.com', { provider: 'cloudflare-access', teamDomain: stub.team, audience: stub.audience });
+      const reloaded = await (await api.post('/api/proxy/reload')).json();
+      expect(reloaded.state, reloaded.message ?? '').toBe('Running');
+      const echo = (r: { body: string }) => JSON.parse(r.body) as { path: string; headers: Record<string, string | undefined> };
+
+      // Authelia: its redirect reaches the client; once signed in its identity replaces the client's.
+      const away = await proxyRequest('authelia.example.com', '/whoami?x=1', { 'Remote-User': 'mallory' });
+      expect(away.status).toBe(302);
+      expect(away.headers.location).toBe('https://auth.example.com/');
+      expect(stub.verified.at(-1)).toEqual({ path: '/api/authz/forward-auth', method: 'GET', uri: '/whoami?x=1' });
+      const alice = await proxyRequest('authelia.example.com', '/whoami', { Cookie: 'idp=ok', 'Remote-User': 'mallory', 'Remote-Name': 'Mallory' });
+      expect(alice.status).toBe(200);
+      expect(echo(alice).path).toBe('/whoami');
+      expect(echo(alice).headers['remote-user']).toBe('alice');
+      expect(echo(alice).headers['remote-groups']).toBe('admins');
+      expect(echo(alice).headers['remote-name']).toBeUndefined();
+
+      // oauth2-proxy: a 401 goes to its sign-in page, which this host proxies to it.
+      const signInRedirect = await proxyRequest('oauth2.example.com', '/whoami');
+      expect(signInRedirect.status).toBe(302);
+      expect(signInRedirect.headers.location).toBe('/oauth2/sign_in?rd=http://oauth2.example.com/whoami');
+      const page2 = await proxyRequest('oauth2.example.com', '/oauth2/sign_in?rd=x');
+      expect(page2.status).toBe(200);
+      expect(page2.body).toBe('oauth2-proxy sign-in');
+      const bob = await proxyRequest('oauth2.example.com', '/whoami', { Cookie: 'idp=ok', 'X-Auth-Request-User': 'mallory' });
+      expect(bob.status).toBe(200);
+      expect(echo(bob).headers['x-auth-request-user']).toBe('bob');
+
+      // Cloudflare Access: the control plane checks the token against the team's keys.
+      const refused = await proxyRequest('cf.example.com', '/whoami', { 'Cf-Access-Authenticated-User-Email': 'mallory@example.com' });
+      expect(refused.status).toBe(403);
+      expect(refused.body).toBe('Sign-in required.');
+      expect((await proxyRequest('cf.example.com', '/whoami', { 'Cf-Access-Jwt-Assertion': stub.token('carol@example.com', true) })).status).toBe(403);
+      const carol = await proxyRequest('cf.example.com', '/whoami', {
+        'Cf-Access-Jwt-Assertion': stub.token('carol@example.com'),
+        'Cf-Access-Authenticated-User-Email': 'mallory@example.com',
+      });
+      expect(carol.status, carol.body).toBe(200);
+      expect(echo(carol).headers['cf-access-authenticated-user-email']).toBe('carol@example.com');
+
+      await signIn(page, 'dark');
+      await page.goto('/');
+      await openView(page, 'Servers', 'Servers');
+      await page.locator('tbody tr', { hasText: 'Sign-in' }).click();
+      await expect(page.getByText('Cloudflare Access sign-in')).toBeVisible();
+      await page.getByText('Authelia sign-in', { exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Edit proxy rule' });
+      await expect(dialog.getByLabel('Sign-in')).toHaveValue('authelia');
+      await expect(dialog.getByLabel('Authelia address')).toHaveValue(verifier);
+    } finally {
+      await new Promise(resolve => stub.server.close(resolve));
+    }
+  });
 });
+
+/**
+ * Stands in for the providers on one port: Authelia's and oauth2-proxy's verify paths answer as theirs do, oauth2-proxy's
+ * sign-in page, a Cloudflare Access team's certs, and an upstream that echoes the request it was sent.
+ */
+function signInStub() {
+  const team = 'e2e.cloudflareaccess.com';
+  const audience = '0123456789abcdef'.repeat(4);
+  const key = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const other = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const jwk = { ...key.publicKey.export({ format: 'jwk' }), kid: 'e2e', alg: 'RS256', use: 'sig' };
+  const verified: { path: string; method?: string; uri?: string }[] = [];
+  const b64 = (v: object) => Buffer.from(JSON.stringify(v)).toString('base64url');
+  const token = (email: string, forged = false) => {
+    const now = Math.floor(Date.now() / 1000);
+    const signed = `${b64({ alg: 'RS256', kid: 'e2e', typ: 'JWT' })}.${b64({ iss: `https://${team}`, aud: [audience], email, iat: now, nbf: now, exp: now + 600, type: 'app' })}`;
+    return `${signed}.${crypto.sign('RSA-SHA256', Buffer.from(signed), forged ? other.privateKey : key.privateKey).toString('base64url')}`;
+  };
+  const server = http.createServer((req, res) => {
+    const url = req.url ?? '/';
+    // Caddy's rewrite to the verify path keeps the client's query, as the providers expect.
+    const path = url.split('?')[0];
+    const signedIn = (req.headers.cookie ?? '').includes('idp=ok');
+    if (path === '/api/authz/forward-auth' || path === '/oauth2/auth') {
+      verified.push({ path, method: req.headers['x-forwarded-method'] as string, uri: req.headers['x-forwarded-uri'] as string });
+      if (path === '/oauth2/auth') res.writeHead(signedIn ? 202 : 401, signedIn ? { 'X-Auth-Request-User': 'bob' } : {}).end();
+      else res.writeHead(signedIn ? 200 : 302, signedIn ? { 'Remote-User': 'alice', 'Remote-Groups': 'admins' } : { Location: 'https://auth.example.com/' }).end();
+    } else if (path === '/oauth2/sign_in') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' }).end('oauth2-proxy sign-in');
+    } else if (path === `/${team}/certs`) {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ keys: [jwk] }));
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ path: url, headers: req.headers }));
+    }
+  });
+  return { server, team, audience, token, verified };
+}
 
 async function expectNoEmptyCharts(page: Page) {
   for (const text of ['Proxy not running', 'No requests in the last 24 hours', 'First sample within'])

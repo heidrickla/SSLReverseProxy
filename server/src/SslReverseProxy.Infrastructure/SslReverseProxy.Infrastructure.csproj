@@ -12,6 +12,7 @@
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />
 
     <!-- Override vulnerable transitives (GHSA advisories) with patched versions. -->
     <!-- Runtime dependency of EF Sqlite: pin the patched native bundle. -->

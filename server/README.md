@@ -24,6 +24,7 @@ Caddy's config is built from the rules, certificate rows and renewal marks. `Pro
 | Authentication | API key in `X-Api-Key` or `Authorization: Bearer`, or a passkey session. Optional mutual TLS pinned to allow-listed client-certificate thumbprints. A request carrying both an API key and a session cookie is refused. |
 | Passkey sessions | WebAuthn ([fido2-net-lib](https://github.com/passwordless-lib/fido2-net-lib)) with discoverable credentials and user verification required. Sign-in sets an HttpOnly, Secure, SameSite=Strict `__Host-sslrp-session` cookie; the database holds the secret's SHA-256 only. Every request rechecks the session: unexpired, not revoked, the user active and in the role the session started with. Sign-out, a role change, deactivation or removing the passkey ends it. Unsafe methods need an `Origin` listed in `Passkeys:Origins` and the session's CSRF token (an HMAC of the secret) in `X-CSRF-Token`. |
 | API-key storage | PBKDF2-SHA256 hash, per-key salt and server pepper only. Plaintext shown once at creation. Constant-time verification. |
+| Per-rule sign-in | Forward auth to Authelia, Authentik or oauth2-proxy, or a Cloudflare Access token checked by this service. Identity headers reach the upstream only from the provider's answer. |
 | Authorization | Deny-by-default. Every endpoint requires a permission; roles map to permissions server-side (`Core/Security/Permissions.cs`). An API key's scopes narrow its owner's current role, checked on every request. |
 | SSRF | Every upstream is validated server-side (`ProxyTargetValidator`): http(s) only, cloud-metadata and link-local blocked, private and loopback gated by policy. |
 | Transport | HSTS and HTTPS redirect in Production; security headers and a JSON-only CSP on every response. |
@@ -61,6 +62,8 @@ Caddy's config is built from the rules, certificate rows and renewal marks. `Pro
 | `Proxy:ReadHeaderTimeoutSeconds`, `Proxy:ReadTimeoutSeconds`, `Proxy:WriteTimeoutSeconds`, `Proxy:IdleTimeoutSeconds` | Data-plane timeouts; 0 keeps Caddy's default, which for read and write is none. |
 | `Proxy:AccessLogPath`, `AccessLogRollSizeMb`, `AccessLogKeepDays` | Data-plane access log as JSON lines. Off by default: records carry client IPs and URLs. |
 | `Proxy:RecentRequests` | Each rule's recent requests in memory, below. On by default. |
+| `Proxy:ControlPlaneUrl` | This service's address as Caddy reaches it, for Cloudflare Access rules (`http://127.0.0.1:8080`, the container's listener). |
+| `Proxy:CloudflareAccessCertsUrl` | Where a team's signing keys are read, `{team}` standing for the team domain (`https://{team}/cdn-cgi/access/certs`). |
 | `Alerts:Targets` | Where alerts go: each has `Name`, `Kind` (`webhook` or `ntfy`), `Url`, optional `Token` and `Events` (empty sends every type). URL and token are secrets; set them through the environment (`Alerts__Targets__0__Url`). A target that fails validation is listed with the reason and not sent to. |
 | `Alerts:ServerDownChecks` | Consecutive `Error` readings before a server alerts as down (2). |
 | `Passkeys:RelyingPartyId` | The host the UI is served from, such as `proxy.example.com`. Empty turns passkey sign-in off. |
@@ -106,7 +109,7 @@ Caddy 2.7 or later: the IP lists emit the `client_ip` matcher. Rate-limited rule
 
 ## Endpoints
 
-All require authentication except `/api/health`, `/api/ready`, `/api/bootstrap-key` and the passkey sign-in endpoints marked anonymous.
+All require authentication except `/api/health`, `/api/ready`, `/api/bootstrap-key`, `/api/sign-in/cloudflare/{ruleId}` and the passkey sign-in endpoints marked anonymous.
 
 Meta
 
@@ -192,6 +195,23 @@ Concurrent edits: each rule carries a `version`, returned in the body and as an 
 ```bash
 curl -X PUT .../rules/$ID -H 'If-Match: "3"' -H 'Content-Type: application/json' -d @rule.json
 ```
+
+Sign-in
+
+Rules take an optional `signIn` object, `{provider, verifierUrl, teamDomain, audience}`. Omitted, sign-in is unchanged; sent, it replaces the rule's; a null `provider` removes it. The check runs after Basic Auth and before the prefix strip, so the provider sees the client's path.
+
+| `provider` | Needs | Caddy |
+| --- | --- | --- |
+| `authelia` | `verifierUrl` | Asks `/api/authz/forward-auth`. Copies `Remote-User`, `Remote-Groups`, `Remote-Email`, `Remote-Name`. |
+| `authentik` | `verifierUrl` | Asks `/outpost.goauthentik.io/auth/caddy`. Copies the twelve `X-Authentik-*` headers. Proxies `/outpost.goauthentik.io/*` on the host to the outpost. |
+| `oauth2-proxy` | `verifierUrl` | Asks `/oauth2/auth`. Copies `X-Auth-Request-User`, `-Email`, `-Groups`, `-Preferred-Username`. A 401 becomes a 302 to `/oauth2/sign_in?rd=<the request>`. Proxies `/oauth2/*` on the host to it with `X-Real-Ip` and `X-Forwarded-Uri`. |
+| `cloudflare-access` | `teamDomain` (`<team>.cloudflareaccess.com`), `audience` (the application's AUD tag, 64 hex characters) | Asks this service at `Proxy:ControlPlaneUrl` + `/api/sign-in/cloudflare/{ruleId}`, which checks `Cf-Access-Jwt-Assertion` and answers with `Cf-Access-Authenticated-User-Email`. |
+
+- Each is Caddy's `forward_auth` as `caddy adapt` 2.11.7 expands it: a GET to the verify path with `X-Forwarded-Method` and `X-Forwarded-Uri`, keeping the client's query. On a 2xx each identity header is deleted from the request and set only when the provider sent it. Any other answer goes to the client as the provider gave it.
+- `verifierUrl` is the provider's address with no path, query, fragment or credentials, under the upstream SSRF policy.
+- The enabled rules on a host that use `authentik` or `oauth2-proxy` share one provider and address, and no rule's prefix may sit under that provider's path. Writes and apply refuse a set that breaks either.
+- The Cloudflare check: RS256 under a key from `Proxy:CloudflareAccessCertsUrl`, issuer `https://<teamDomain>`, the rule's audience, an expiry, 60 s of clock skew. Keys are kept an hour and fetched again for an unknown key id at most every 30 s. When the keys cannot be read, the last ones serve for 24 hours. A service token carries no email, and the header is left off. The check reads the rule as stored, so a change to its team or audience applies before the next Reload.
+- `/api/sign-in/` is anonymous, outside the rate limit, and skips HTTPS redirection, mutual TLS and this service's own sign-in: Caddy calls it with the proxied request's headers. Under `Security:RequireMutualTls`, Caddy calls an HTTP listener such as the container's 8080, since Kestrel asks for a client certificate at the HTTPS handshake.
 
 Recent requests
 

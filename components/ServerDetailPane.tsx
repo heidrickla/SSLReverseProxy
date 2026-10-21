@@ -4,7 +4,7 @@ import Button from './Button';
 import ToggleSwitch from './icons/ToggleSwitch';
 import XIcon from './icons/XIcon';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
-import ProxyRuleModal, { ProxyRuleFormData } from './ProxyRuleModal';
+import ProxyRuleModal, { ProxyRuleFormData, signInLabel } from './ProxyRuleModal';
 import ConfirmationModal from './ConfirmationModal';
 import Modal from './Modal';
 import RecentRequests from './RecentRequests';
@@ -129,6 +129,9 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                                     {rule.domain}{rule.routing?.pathPrefix ?? ''}
                                     {rule.routing?.stripPathPrefix && (
                                         <span className="ml-2 rounded-md bg-surface-raised px-1.5 py-0.5 text-xs font-normal text-on-surface-muted">strip</span>
+                                    )}
+                                    {rule.signIn && (
+                                        <span className="ml-2 rounded-md bg-primary/10 px-1.5 py-0.5 text-xs font-normal text-on-surface">{signInLabel(rule.signIn.provider)} sign-in</span>
                                     )}
                                 </p>
                                 <p className="mt-0.5 text-xs text-on-surface-muted">to {rule.upstreamUrl}</p>

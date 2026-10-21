@@ -93,6 +93,10 @@ public static class CaddyConfigBuilder
             if (!string.IsNullOrEmpty(rule.BasicAuthUsername) && !string.IsNullOrEmpty(rule.BasicAuthPasswordHash))
                 handle.Add(BuildBasicAuthHandler(rule.BasicAuthUsername!, rule.BasicAuthPasswordHash!));
 
+            // After Basic Auth, so a rule with both needs both; before the rewrite, so the provider sees the client's path.
+            if (rule.SignInProvider is { } provider)
+                handle.Add(BuildSignInHandler(rule, provider, options));
+
             // Caddy's strip is case-insensitive like its path matcher and leaves "/"
             // when the whole path was the prefix.
             if (rule.StripPathPrefix && rule.PathPrefix is { } strip)
@@ -111,6 +115,10 @@ public static class CaddyConfigBuilder
                 ["terminal"] = true,
             });
         }
+
+        // A provider's own sign-in paths on each host that uses it, ahead of the host's rules.
+        foreach (var callback in BuildSignInCallbackRoutes(active).Reverse())
+            (callback.Tls ? tlsRoutes : plainRoutes).Insert(0, callback.Route);
 
         // One server per port. A TLS host's route on a server that also listens
         // on the HTTP port is proxied in plaintext there, because automatic
@@ -679,6 +687,140 @@ public static class CaddyConfigBuilder
         foreach (var i in items) arr.Add(i);
         return arr;
     }
+
+    /// <summary>
+    /// Caddy's <c>forward_auth</c> expansion, as <c>caddy adapt</c> 2.11.7 writes it: a GET to the verify path
+    /// with the method and URI in headers; on 2xx each identity header is deleted from the request and set
+    /// only when the provider sent it, and the request goes on; any other answer goes to the client.
+    /// </summary>
+    private static JsonObject BuildSignInHandler(ProxyRule rule, string provider, ProxyOptions options)
+    {
+        if (!SignInProviders.Profiles.TryGetValue(provider, out var profile))
+            throw new InvalidOperationException($"Rule '{rule.Domain}{rule.PathPrefix}' names an unknown sign-in provider '{provider}'.");
+        var verifier = provider == SignInProviders.CloudflareAccess ? ControlPlane(options) : rule.SignInVerifierUrl;
+        if (string.IsNullOrWhiteSpace(verifier) || !Uri.TryCreate(verifier, UriKind.Absolute, out _))
+            throw new InvalidOperationException($"Rule '{rule.Domain}{rule.PathPrefix}' has no verifier address for {profile.Label}.");
+        if (provider == SignInProviders.CloudflareAccess
+            && (rule.CloudflareTeamDomain is null || rule.CloudflareAudience is null))
+            throw new InvalidOperationException($"Rule '{rule.Domain}{rule.PathPrefix}' needs a Cloudflare Access team domain and audience.");
+
+        var good = new JsonArray { new JsonObject { ["handle"] = new JsonArray { new JsonObject { ["handler"] = "vars" } } } };
+        foreach (var header in profile.CopyHeaders.Order(StringComparer.Ordinal))
+        {
+            var placeholder = "{http.reverse_proxy.header." + header + "}";
+            good.Add(new JsonObject
+            {
+                ["handle"] = new JsonArray { new JsonObject { ["handler"] = "headers", ["request"] = new JsonObject { ["delete"] = new JsonArray { header } } } },
+            });
+            good.Add(new JsonObject
+            {
+                ["handle"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["handler"] = "headers",
+                        ["request"] = new JsonObject { ["set"] = new JsonObject { [header] = new JsonArray { placeholder } } },
+                    },
+                },
+                ["match"] = new JsonArray
+                {
+                    new JsonObject { ["not"] = new JsonArray { new JsonObject { ["vars"] = new JsonObject { [placeholder] = new JsonArray { "" } } } } },
+                },
+            });
+        }
+        var responses = new JsonArray
+        {
+            new JsonObject { ["match"] = new JsonObject { ["status_code"] = new JsonArray { 2 } }, ["routes"] = good },
+        };
+        if (profile.SignInOn401 is { } signIn)
+        {
+            responses.Add(new JsonObject
+            {
+                ["match"] = new JsonObject { ["status_code"] = new JsonArray { 401 } },
+                ["routes"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["handle"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["handler"] = "static_response",
+                                ["headers"] = new JsonObject { ["Location"] = new JsonArray { signIn } },
+                                ["status_code"] = 302,
+                            },
+                        },
+                    },
+                },
+            });
+        }
+
+        var uri = provider == SignInProviders.CloudflareAccess ? profile.VerifyUri + rule.Id : profile.VerifyUri;
+        var handler = VerifierProxy(verifier!);
+        handler["handle_response"] = responses;
+        var set = new JsonObject
+        {
+            ["X-Forwarded-Method"] = new JsonArray { "{http.request.method}" },
+            ["X-Forwarded-Uri"] = new JsonArray { "{http.request.uri}" },
+        };
+        // The control plane is called by its own name, so its AllowedHosts need not list the proxied hosts.
+        if (provider == SignInProviders.CloudflareAccess)
+            set["Host"] = new JsonArray { new Uri(verifier!, UriKind.Absolute).Authority };
+        handler["headers"] = new JsonObject { ["request"] = new JsonObject { ["set"] = set } };
+        handler["rewrite"] = new JsonObject { ["method"] = "GET", ["uri"] = uri };
+        return handler;
+    }
+
+    /// <summary>Authentik's outpost and oauth2-proxy's sign-in paths, proxied to the provider on each host whose rules use it.</summary>
+    private static IEnumerable<(bool Tls, JsonObject Route)> BuildSignInCallbackRoutes(IReadOnlyList<ProxyRule> active)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rule in active.OrderBy(r => r.Domain, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Id))
+        {
+            if (rule.SignInProvider is not { } provider || !SignInProviders.Profiles.TryGetValue(provider, out var profile)
+                || profile.CallbackPrefix is not { } prefix || string.IsNullOrWhiteSpace(rule.SignInVerifierUrl)) continue;
+            if (!seen.Add(rule.Domain.Trim())) continue;
+            var proxy = VerifierProxy(rule.SignInVerifierUrl!);
+            if (provider == SignInProviders.OAuth2Proxy)
+                proxy["headers"] = new JsonObject
+                {
+                    ["request"] = new JsonObject
+                    {
+                        ["set"] = new JsonObject
+                        {
+                            ["X-Forwarded-Uri"] = new JsonArray { "{http.request.uri}" },
+                            ["X-Real-Ip"] = new JsonArray { "{http.request.remote.host}" },
+                        },
+                    },
+                };
+            yield return (rule.EnableTls, new JsonObject
+            {
+                ["match"] = new JsonArray
+                {
+                    new JsonObject { ["host"] = new JsonArray { rule.Domain }, ["path"] = new JsonArray { prefix + "/*" } },
+                },
+                ["handle"] = new JsonArray { proxy },
+                ["terminal"] = true,
+            });
+        }
+    }
+
+    private static JsonObject VerifierProxy(string url)
+    {
+        var proxy = new JsonObject
+        {
+            ["handler"] = "reverse_proxy",
+            ["upstreams"] = new JsonArray { new JsonObject { ["dial"] = ToDial(url) } },
+        };
+        if (new Uri(url, UriKind.Absolute).Scheme == Uri.UriSchemeHttps)
+            proxy["transport"] = new JsonObject { ["protocol"] = "http", ["tls"] = new JsonObject() };
+        return proxy;
+    }
+
+    private static string ControlPlane(ProxyOptions options) =>
+        Uri.TryCreate(options.ControlPlaneUrl, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps)
+            ? options.ControlPlaneUrl
+            : throw new InvalidOperationException("Proxy:ControlPlaneUrl must be the http(s) address Caddy reaches this service at.");
 
     // Caddy "dial" is host:port. Derive port from scheme when not explicit.
     private static string ToDial(string upstreamUrl)

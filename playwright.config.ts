@@ -15,6 +15,8 @@ export const caddyPath = process.env.SSLRP_TEST_CADDY || undefined;
 export const proxyHttpPort = 8780;
 // e2e/alerts.spec.ts listens here for the run's alert target.
 export const alertListenerPort = 8790;
+// e2e/traffic.spec.ts stands in for the sign-in providers here, and serves the Cloudflare Access keys the control plane reads.
+export const signInStubPort = 8791;
 const proxyHttpsPort = 8743;
 const proxyDir = path.join(os.tmpdir(), `sslrp-e2e-${process.env.SSLRP_E2E_RUN}-proxy`);
 
@@ -54,6 +56,8 @@ export default defineConfig({
         Alerts__Targets__0__Token: 'e2e-alert-token',
         // No demo server comes back up, so the run sends this target test alerts only.
         Alerts__Targets__0__Events__0: 'server.up',
+        Proxy__ControlPlaneUrl: 'http://127.0.0.1:5195',
+        Proxy__CloudflareAccessCertsUrl: `http://127.0.0.1:${signInStubPort}/{team}/certs`,
         Proxy__ConfigDirectory: path.join(proxyDir, 'config'),
         XDG_DATA_HOME: path.join(proxyDir, 'data'),
       },

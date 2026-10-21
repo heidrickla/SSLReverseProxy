@@ -52,8 +52,8 @@ public static class RoutePath
         $"{domain.Trim().ToLowerInvariant()}{prefix?.ToLowerInvariant()}";
 
     /// <summary>
-    /// Enabled rules on one host and path, or on one host with different TLS settings. Caddy serves
-    /// such a set with one rule shadowing the other, so writes, validation and apply refuse it.
+    /// Enabled rules on one host and path, or on one host with different TLS settings or sign-in callbacks.
+    /// Caddy serves such a set with one rule shadowing the other, so writes, validation and apply refuse it.
     /// </summary>
     public static IEnumerable<string> Conflicts(IEnumerable<ProxyRule> rules)
     {
@@ -63,6 +63,8 @@ public static class RoutePath
         foreach (var g in enabled.GroupBy(r => r.Domain.Trim(), StringComparer.OrdinalIgnoreCase)
                      .Where(g => g.Select(r => r.EnableTls).Distinct().Count() > 1))
             yield return MixedTls(g.Key);
+        foreach (var g in enabled.GroupBy(r => r.Domain.Trim(), StringComparer.OrdinalIgnoreCase))
+            if (SignInConflict(g.Key, [.. g]) is { } signIn) yield return signIn;
     }
 
     /// <summary>The conflict <paramref name="rule"/> would have with the other rules, or null.</summary>
@@ -73,10 +75,31 @@ public static class RoutePath
         var key = RouteKey(rule.Domain, rule.PathPrefix);
         if (enabled.Any(o => RouteKey(o.Domain, o.PathPrefix) == key)) return Duplicate(rule);
         var host = rule.Domain.Trim();
-        return enabled.Any(o => string.Equals(o.Domain.Trim(), host, StringComparison.OrdinalIgnoreCase) && o.EnableTls != rule.EnableTls)
-            ? MixedTls(host)
+        var sameHost = enabled.Where(o => string.Equals(o.Domain.Trim(), host, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (sameHost.Any(o => o.EnableTls != rule.EnableTls)) return MixedTls(host);
+        return SignInConflict(host, [.. sameHost, rule]);
+    }
+
+    /// <summary>
+    /// A host has one callback route for Authentik or oauth2-proxy sign-in, so the host's rules that use one
+    /// share it, and no rule's prefix may sit under the callback path the route takes.
+    /// </summary>
+    private static string? SignInConflict(string host, IReadOnlyList<ProxyRule> hostRules)
+    {
+        var callbacks = hostRules.Where(r => CallbackOf(r) is not null).ToList();
+        if (callbacks.Count == 0) return null;
+        if (callbacks.Select(r => (r.SignInProvider, r.SignInVerifierUrl?.ToLowerInvariant())).Distinct().Count() > 1)
+            return $"Rules for '{host}' sign in through different Authentik or oauth2-proxy verifiers; a host has one sign-in callback.";
+        var profile = CallbackOf(callbacks[0])!;
+        var prefix = profile.CallbackPrefix!;
+        return hostRules.FirstOrDefault(r => r.PathPrefix is { } p
+                && (p.Equals(prefix, StringComparison.OrdinalIgnoreCase) || p.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))) is { } shadowed
+            ? $"Route '{host}{shadowed.PathPrefix}' is under {prefix}, which {profile.Label} sign-in on this host takes."
             : null;
     }
+
+    private static SignInProviders.Profile? CallbackOf(ProxyRule r) =>
+        r.SignInProvider is { } p && SignInProviders.Profiles.TryGetValue(p, out var profile) && profile.CallbackPrefix is not null ? profile : null;
 
     private static string Duplicate(ProxyRule r) => r.PathPrefix is null
         ? $"Duplicate domain '{r.Domain}' — only one whole-host rule per host is allowed."

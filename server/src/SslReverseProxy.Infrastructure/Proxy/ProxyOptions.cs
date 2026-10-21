@@ -131,6 +131,12 @@ public sealed class ProxyOptions
     /// </summary>
     public bool RecentRequests { get; set; } = true;
 
+    /// <summary>This service's address as Caddy reaches it, for Cloudflare Access rules. The container listens on 8080.</summary>
+    public string ControlPlaneUrl { get; set; } = "http://127.0.0.1:8080";
+
+    /// <summary>Where a Cloudflare Access team's signing keys are read; <c>{team}</c> is the team domain.</summary>
+    public string CloudflareAccessCertsUrl { get; set; } = "https://{team}/cdn-cgi/access/certs";
+
     /// <summary>
     /// Seconds between background probes of every enabled rule's upstreams,
     /// which set each server's status. 0 turns the monitor off.

@@ -131,6 +131,22 @@ public class ProxyRule
     public string? BasicAuthUsername { get; set; }
     public string? BasicAuthPasswordHash { get; set; }
 
+    /// <summary>
+    /// Identity provider that signs requests in before they reach the upstream: authelia, authentik,
+    /// oauth2-proxy (forward auth to <see cref="SignInVerifierUrl"/>) or cloudflare-access (the control plane
+    /// checks the Access token). Null serves the rule without one.
+    /// </summary>
+    public string? SignInProvider { get; set; }
+
+    /// <summary>The provider's address as Caddy reaches it, such as http://10.0.0.20:9091.</summary>
+    public string? SignInVerifierUrl { get; set; }
+
+    /// <summary>Cloudflare Access team domain, such as example.cloudflareaccess.com.</summary>
+    public string? CloudflareTeamDomain { get; set; }
+
+    /// <summary>The Access application's audience (AUD) tag.</summary>
+    public string? CloudflareAudience { get; set; }
+
     // Additional upstreams for load balancing, comma-separated URLs in the same
     // form as UpstreamUrl. Empty means a single upstream and no balancing.
     public string? AdditionalUpstreams { get; set; }

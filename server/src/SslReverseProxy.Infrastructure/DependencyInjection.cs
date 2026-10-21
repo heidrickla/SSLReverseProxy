@@ -52,6 +52,9 @@ public static class DependencyInjection
         services.AddSingleton<TrafficRecorder>();
         services.AddSingleton<CaddyCertificateLog>();
         services.AddSingleton<RecentRequests>();
+        services.AddHttpClient(CloudflareAccessVerifier.ClientName, c => c.Timeout = CloudflareAccessVerifier.RequestTimeout)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddSingleton<CloudflareAccessVerifier>();
         services.AddSingleton<ICertificateProbe, TlsCertificateProbe>();
         services.AddSingleton<IProxyController, CaddyProxyController>();
         services.AddSingleton<ProxyChanges>();

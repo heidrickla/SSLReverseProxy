@@ -186,7 +186,112 @@ public class CaddyBinaryValidationTests
             IdleTimeoutSeconds = 120,
             AcmeContactEmail = "ops@example.com",
         }),
+
+        ["sign-in"] = ([
+            SignInBuilderTests.Rule(SignInProviders.Authelia, r => { r.EnableTls = true; r.SignInVerifierUrl = "https://authelia.internal:9091"; }),
+            SignInBuilderTests.Rule(SignInProviders.Authentik, r => r.PathPrefix = "/app", "b.example.com"),
+            SignInBuilderTests.Rule(SignInProviders.OAuth2Proxy, domain: "c.example.com"),
+            SignInBuilderTests.Rule(SignInProviders.OAuth2Proxy, r => r.PathPrefix = "/api", "c.example.com"),
+            SignInBuilderTests.Rule(SignInProviders.CloudflareAccess, domain: "d.example.com"),
+        ], new ProxyOptions()),
     };
+
+    private const string AuthentikHeaders =
+        "X-Authentik-Username X-Authentik-Groups X-Authentik-Entitlements X-Authentik-Email X-Authentik-Name X-Authentik-Uid " +
+        "X-Authentik-Jwt X-Authentik-Meta-Jwks X-Authentik-Meta-Outpost X-Authentik-Meta-Provider X-Authentik-Meta-App X-Authentik-Meta-Version";
+
+    // Each provider's Caddy example, with its copy_headers in the provider's own order.
+    private static readonly Dictionary<string, string> ForwardAuthCaddyfiles = new()
+    {
+        [SignInProviders.Authelia] = """
+            forward_auth idp.internal:9091 {
+                uri /api/authz/forward-auth
+                copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+            }
+            """,
+        [SignInProviders.Authentik] = """
+            route {
+                reverse_proxy /outpost.goauthentik.io/* http://idp.internal:9091
+                forward_auth http://idp.internal:9091 {
+                    uri /outpost.goauthentik.io/auth/caddy
+                    copy_headers HEADERS
+                }
+            }
+            """.Replace("HEADERS", AuthentikHeaders, StringComparison.Ordinal),
+        [SignInProviders.OAuth2Proxy] = """
+            handle /oauth2/* {
+                reverse_proxy idp.internal:9091 {
+                    header_up X-Real-IP {remote_host}
+                    header_up X-Forwarded-Uri {uri}
+                }
+            }
+            handle {
+                forward_auth idp.internal:9091 {
+                    uri /oauth2/auth
+                    copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Groups X-Auth-Request-Preferred-Username
+                    @error status 401
+                    handle_response @error {
+                        redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+                    }
+                }
+            }
+            """,
+    };
+
+    /// <summary>
+    /// The builder writes forward_auth's expansion out by hand. Caddy's own adapter expands each provider's
+    /// example, and the verify call and the callback proxy must come out the same.
+    /// </summary>
+    [Theory]
+    [InlineData(SignInProviders.Authelia)]
+    [InlineData(SignInProviders.Authentik)]
+    [InlineData(SignInProviders.OAuth2Proxy)]
+    public void ForwardAuth_IsWhatCaddyExpandsItTo(string provider)
+    {
+        if (Caddy() is not { } caddy) return;
+
+        var caddyfile = "{\n\tadmin off\n\tauto_https off\n}\nhttp://a.example.com {\n" + ForwardAuthCaddyfiles[provider] + "\n}\n";
+        var path = Path.Combine(Path.GetTempPath(), $"sslrp-adapt-{Guid.NewGuid():N}.caddyfile");
+        File.WriteAllText(path, caddyfile);
+        System.Text.Json.Nodes.JsonNode adapted;
+        try
+        {
+            var (exit, stdout, stderr) = RunSplit(caddy, "adapt", "--config", path, "--adapter", "caddyfile");
+            Assert.True(exit == 0, stderr);
+            adapted = System.Text.Json.Nodes.JsonNode.Parse(stdout)!;
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { /* best effort */ }
+        }
+
+        var proxies = Descendants(adapted).Where(o => (string?)o["handler"] == "reverse_proxy").ToList();
+        var rule = SignInBuilderTests.Rule(provider);
+        var built = CaddyConfigBuilder.Build([rule], new ProxyOptions());
+        var ours = SignInBuilderTests.SignInHandler(built, rule);
+        var theirs = proxies.Single(o => o["rewrite"] is not null);
+        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(theirs, ours), $"caddy:\n{theirs.ToJsonString()}\nours:\n{ours.ToJsonString()}");
+
+        var callback = proxies.SingleOrDefault(o => o["rewrite"] is null);
+        if (callback is null)
+        {
+            Assert.Single(SignInBuilderTests.Routes(built));
+            return;
+        }
+        var ourCallback = SignInBuilderTests.Routes(built)[0]!["handle"]![0]!;
+        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(callback, ourCallback), $"caddy:\n{callback.ToJsonString()}\nours:\n{ourCallback.ToJsonString()}");
+    }
+
+    private static IEnumerable<System.Text.Json.Nodes.JsonObject> Descendants(System.Text.Json.Nodes.JsonNode? node)
+    {
+        if (node is System.Text.Json.Nodes.JsonObject o)
+        {
+            yield return o;
+            foreach (var (_, v) in o) foreach (var d in Descendants(v)) yield return d;
+        }
+        else if (node is System.Text.Json.Nodes.JsonArray a)
+            foreach (var v in a) foreach (var d in Descendants(v)) yield return d;
+    }
 
     [Theory]
     [MemberData(nameof(CaseNames))]
@@ -263,6 +368,24 @@ public class CaddyBinaryValidationTests
         var output = proc.StandardOutput.ReadToEnd() + stderr.GetAwaiter().GetResult();
         proc.WaitForExit(60_000);
         return (proc.ExitCode, output);
+    }
+
+    private static (int Exit, string Stdout, string Stderr) RunSplit(string caddy, params string[] args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = caddy,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var proc = Process.Start(psi)!;
+        var stderr = proc.StandardError.ReadToEndAsync();
+        var stdout = proc.StandardOutput.ReadToEnd();
+        proc.WaitForExit(60_000);
+        return (proc.ExitCode, stdout, stderr.GetAwaiter().GetResult());
     }
 
     private static (int Exit, string Output) Validate(string caddy, string json)

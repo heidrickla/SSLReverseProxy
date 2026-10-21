@@ -313,6 +313,12 @@ namespace SslReverseProxy.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("CloudflareAudience")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CloudflareTeamDomain")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -375,6 +381,12 @@ namespace SslReverseProxy.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<Guid>("ServerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SignInProvider")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SignInVerifierUrl")
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("SkipAccessLog")

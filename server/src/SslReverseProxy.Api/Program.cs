@@ -158,14 +158,21 @@ app.UseForwardedHeaders();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 
+// Caddy calls the sign-in checks with the proxied request's headers, cookies and Authorization included.
+// The authentication handler skips them too: UseAuthentication inside a branch would be added again for every request.
+static bool ControlPlane(HttpContext ctx) => !SignInEndpoints.IsSignInPath(ctx.Request.Path);
+
 if (!app.Environment.IsDevelopment())
 {
-    app.UseHsts();
-    app.UseHttpsRedirection();
+    app.UseWhen(ControlPlane, b =>
+    {
+        b.UseHsts();
+        b.UseHttpsRedirection();
+    });
 }
 
 app.UseMiddleware<SecurityHeadersMiddleware>();
-app.UseMiddleware<ClientCertificateMiddleware>(); // enforces mTLS when enabled
+app.UseWhen(ControlPlane, b => b.UseMiddleware<ClientCertificateMiddleware>()); // enforces mTLS when enabled
 app.UseRateLimiter();
 app.UseCors();
 app.UseAuthentication();
@@ -182,6 +189,7 @@ app.MapCertificateEndpoints();
 app.MapBackupEndpoints();
 app.MapAlertEndpoints();
 app.MapPasskeyEndpoints();
+app.MapSignInEndpoints();
 
 // Seed:Demo fills a new Development database with sample data, for screenshots and the browser smoke test.
 var seedDemo = app.Configuration.GetValue<bool>("Seed:Demo");

@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SslReverseProxy.Api.Endpoints;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
 using SslReverseProxy.Infrastructure.Persistence;
@@ -60,6 +61,9 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAu
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        // The proxied request's own credentials, which Caddy passes along to the sign-in checks.
+        if (SignInEndpoints.IsSignInPath(Request.Path)) return AuthenticateResult.NoResult();
+
         var token = ExtractToken();
         var cookie = _passkeys.Enabled ? Request.Cookies[SessionTokens.CookieName] : null;
 

@@ -77,7 +77,7 @@ public static class ServerEndpoints
             ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
             var problem = ValidateRule(req.Domain, req.UpstreamUrl, validator, req.AllowedCidrs, req.DeniedCidrs,
-                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening, req.Routing,
+                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening, req.Routing, req.SignIn,
                 existingAdditionalUpstreams: null, isCreate: true);
             if (problem is not null) return problem;
 
@@ -96,6 +96,7 @@ public static class ServerEndpoints
             };
             ApplyHardening(rule, req.Hardening);
             ApplyRouting(rule, req.Routing);
+            ApplySignIn(rule, req.SignIn);
             if (PlaceholderProblem(rule) is { } braced) return braced;
             using var change = await changes.EnterAsync(ctx.RequestAborted);
             if (!await db.Servers.AnyAsync(s => s.Id == serverId, ctx.RequestAborted))
@@ -122,7 +123,7 @@ public static class ServerEndpoints
                 return precondition;
 
             var problem = ValidateRule(req.Domain, req.UpstreamUrl, validator, req.AllowedCidrs, req.DeniedCidrs,
-                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening, req.Routing,
+                req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening, req.Routing, req.SignIn,
                 existingAdditionalUpstreams: rule.AdditionalUpstreams, isCreate: false);
             if (problem is not null) return problem;
 
@@ -141,6 +142,7 @@ public static class ServerEndpoints
                 rule.BasicAuthPasswordHash = HashBasicAuth(req.BasicAuthUsername, req.BasicAuthPassword);
             ApplyHardening(rule, req.Hardening);
             ApplyRouting(rule, req.Routing);
+            ApplySignIn(rule, req.SignIn);
             // Checked on the row as it will be saved; the request scope discards it on refusal.
             if (PlaceholderProblem(rule) is { } braced) return braced;
             using var change = await changes.EnterAsync(ctx.RequestAborted);
@@ -309,11 +311,11 @@ public static class ServerEndpoints
         string domain, string upstream, ProxyTargetValidator validator,
         string? allowedCidrs, string? deniedCidrs,
         int? rateLimitPerMinute, string? basicAuthUsername, string? basicAuthPassword,
-        RuleHardeningRequest? hardening, RuleRoutingRequest? routing,
+        RuleHardeningRequest? hardening, RuleRoutingRequest? routing, RuleSignInRequest? signIn,
         string? existingAdditionalUpstreams, bool isCreate)
     {
         var errors = RuleErrors(domain, upstream, validator, allowedCidrs, deniedCidrs, rateLimitPerMinute,
-            basicAuthUsername, basicAuthPassword, hardening, routing, existingAdditionalUpstreams, isCreate);
+            basicAuthUsername, basicAuthPassword, hardening, routing, signIn, existingAdditionalUpstreams, isCreate);
         return errors.Count > 0 ? Results.ValidationProblem(errors) : null;
     }
 
@@ -322,7 +324,7 @@ public static class ServerEndpoints
         string domain, string upstream, ProxyTargetValidator validator,
         string? allowedCidrs, string? deniedCidrs,
         int? rateLimitPerMinute, string? basicAuthUsername, string? basicAuthPassword,
-        RuleHardeningRequest? hardening, RuleRoutingRequest? routing,
+        RuleHardeningRequest? hardening, RuleRoutingRequest? routing, RuleSignInRequest? signIn,
         string? existingAdditionalUpstreams, bool isCreate)
     {
         var errors = new Dictionary<string, string[]>();
@@ -339,6 +341,7 @@ public static class ServerEndpoints
             errors["basicAuthPassword"] = ["A password is required when a basic-auth username is set."];
         ValidateHardening(hardening, upstream, validator, errors);
         ValidateRouting(routing, errors);
+        ValidateSignIn(signIn, validator, errors);
 
         // Checked against the upstreams the rule will actually END UP with, not
         // just the ones in this request. On an update that changes only
@@ -381,6 +384,56 @@ public static class ServerEndpoints
         RoutePath.TryNormalize(r.PathPrefix, out var prefix, out _);
         rule.PathPrefix = prefix;
         rule.StripPathPrefix = prefix is not null && r.StripPathPrefix == true;
+    }
+
+    private static void ValidateSignIn(RuleSignInRequest? s, ProxyTargetValidator validator, Dictionary<string, string[]> errors)
+    {
+        if (s is null || string.IsNullOrWhiteSpace(s.Provider)) return;
+        var provider = s.Provider.Trim().ToLowerInvariant();
+        if (!SignInProviders.Profiles.TryGetValue(provider, out var profile))
+        {
+            errors["signIn.provider"] = [$"Use one of: {string.Join(", ", SignInProviders.Profiles.Keys)}."];
+            return;
+        }
+        if (SignInProviders.UsesVerifier(provider))
+        {
+            if (VerifierProblem(s.VerifierUrl, validator) is { } bad) errors["signIn.verifierUrl"] = [bad];
+            if (!string.IsNullOrWhiteSpace(s.TeamDomain) || !string.IsNullOrWhiteSpace(s.Audience))
+                errors["signIn.teamDomain"] = [$"Only Cloudflare Access takes a team domain and audience, not {profile.Label}."];
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(s.VerifierUrl))
+            errors["signIn.verifierUrl"] = ["Cloudflare Access is checked by this service; leave the verifier address empty."];
+        if (!SignInProviders.TeamDomain().IsMatch(s.TeamDomain?.Trim().ToLowerInvariant() ?? string.Empty))
+            errors["signIn.teamDomain"] = ["The team domain is <team>.cloudflareaccess.com."];
+        if (!SignInProviders.Audience().IsMatch(s.Audience?.Trim().ToLowerInvariant() ?? string.Empty))
+            errors["signIn.audience"] = ["The audience is the application's AUD tag: 64 hexadecimal characters."];
+    }
+
+    /// <summary>The provider's own address: http(s), a host, no credentials, path, query or fragment, and the upstream policy.</summary>
+    private static string? VerifierProblem(string? url, ProxyTargetValidator validator)
+    {
+        var v = url?.Trim() ?? string.Empty;
+        if (v.Length == 0) return "The provider's address is required, e.g. http://authelia:9091.";
+        var check = validator.ValidateUpstream(v);
+        if (!check.Ok) return check.Reason;
+        var uri = new Uri(v, UriKind.Absolute);
+        if (uri.UserInfo.Length > 0) return "Must not carry a user name or password.";
+        if (uri.AbsolutePath != "/" || uri.Query.Length > 0 || uri.Fragment.Length > 0 || v.Contains('?') || v.Contains('#'))
+            return "Give the address only, with no path, query or fragment; the provider's verify path is added.";
+        return null;
+    }
+
+    /// <summary>Null leaves the rule's sign-in as it is; a block replaces it, and one with no provider clears it.</summary>
+    internal static void ApplySignIn(ProxyRule rule, RuleSignInRequest? s)
+    {
+        if (s is null) return;
+        var provider = string.IsNullOrWhiteSpace(s.Provider) ? null : s.Provider.Trim().ToLowerInvariant();
+        rule.SignInProvider = provider;
+        rule.SignInVerifierUrl = SignInProviders.UsesVerifier(provider) ? s.VerifierUrl?.Trim().TrimEnd('/') : null;
+        var cloudflare = provider == SignInProviders.CloudflareAccess;
+        rule.CloudflareTeamDomain = cloudflare ? s.TeamDomain?.Trim().ToLowerInvariant() : null;
+        rule.CloudflareAudience = cloudflare ? s.Audience?.Trim().ToLowerInvariant() : null;
     }
 
     private static string RouteName(ProxyRule rule) => rule.Domain + rule.PathPrefix;

@@ -63,7 +63,14 @@ public static partial class BackupFormat
             HealthCheckExpectStatus = r.HealthCheckExpectStatus,
             SkipAccessLog = r.SkipAccessLog,
         },
-        new RuleRoutingRequest { PathPrefix = r.PathPrefix, StripPathPrefix = r.StripPathPrefix });
+        new RuleRoutingRequest { PathPrefix = r.PathPrefix, StripPathPrefix = r.StripPathPrefix },
+        r.SignInProvider is null ? null : new RuleSignInRequest
+        {
+            Provider = r.SignInProvider,
+            VerifierUrl = r.SignInVerifierUrl,
+            TeamDomain = r.CloudflareTeamDomain,
+            Audience = r.CloudflareAudience,
+        });
 
     /// <summary>The row-count limits, read from the raw JSON before anything is bound to it.</summary>
     public static string? CountProblem(JsonElement root)
@@ -276,7 +283,7 @@ public static class BackupImport
 
             var errors = ServerEndpoints.RuleErrors(d.Domain ?? string.Empty, d.UpstreamUrl ?? string.Empty, validator,
                 d.AllowedCidrs, d.DeniedCidrs, d.RateLimitPerMinute, d.BasicAuthUsername, basicAuthPassword: null,
-                d.Hardening ?? new RuleHardeningRequest(), d.Routing ?? new RuleRoutingRequest(),
+                d.Hardening ?? new RuleHardeningRequest(), d.Routing ?? new RuleRoutingRequest(), d.SignIn,
                 existingAdditionalUpstreams: null, isCreate: false);
             var user = string.IsNullOrWhiteSpace(d.BasicAuthUsername) ? null : d.BasicAuthUsername.Trim();
             if (user is not null && string.IsNullOrEmpty(d.BasicAuthPasswordHash))
@@ -432,6 +439,8 @@ public static class BackupImport
         rule.BasicAuthPasswordHash = rule.BasicAuthUsername is null ? null : d.BasicAuthPasswordHash;
         ServerEndpoints.ApplyHardening(rule, d.Hardening ?? new RuleHardeningRequest());
         ServerEndpoints.ApplyRouting(rule, d.Routing ?? new RuleRoutingRequest());
+        // A backup row is the whole rule, so no sign-in block means none.
+        ServerEndpoints.ApplySignIn(rule, d.SignIn ?? new RuleSignInRequest());
     }
 
     private static void Record(BackupStage stage, string kind, Guid id, string name, List<BackupFieldDto> fields)

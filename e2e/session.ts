@@ -67,6 +67,21 @@ export function proxyGet(host: string, path = '/'): Promise<{ status: number; lo
   });
 }
 
+/** One request to the proxy's HTTP port with the client's own headers, keeping the answer's headers and body. */
+export function proxyRequest(host: string, path: string, headers: Record<string, string> = {}):
+  Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port: proxyHttpPort, path, headers: { ...headers, Host: host } }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
+    });
+    req.setTimeout(5000, () => req.destroy(new Error(`proxy request for ${host} timed out`)));
+    req.on('error', reject);
+  });
+}
+
 /**
  * Sends demo traffic through the running proxy: `plain` requests to the
  * plaintext host, which are proxied, and `redirected` to a TLS host, which

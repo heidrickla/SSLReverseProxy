@@ -107,6 +107,11 @@ export interface RuleHardening {
 }
 /** Path routing. A null prefix serves the whole host. Mirrors RuleRoutingDto. */
 export interface RuleRouting { pathPrefix: string | null; stripPathPrefix: boolean; }
+export type SignInProvider = 'authelia' | 'authentik' | 'oauth2-proxy' | 'cloudflare-access';
+/** Sign-in through an identity provider. verifierUrl for the forward-auth providers; teamDomain and audience for Cloudflare Access. Mirrors RuleSignInDto. */
+export interface RuleSignIn { provider: SignInProvider; verifierUrl: string | null; teamDomain: string | null; audience: string | null; }
+/** A null provider removes the rule's sign-in. */
+export interface RuleSignInInput { provider: SignInProvider | null; verifierUrl?: string | null; teamDomain?: string | null; audience?: string | null; }
 export interface Rule {
   id: string; serverId: string; domain: string; upstreamUrl: string;
   enableTls: boolean; enabled: boolean; allowedCidrs: string | null; deniedCidrs: string | null;
@@ -114,6 +119,7 @@ export interface Rule {
   basicAuthEnabled: boolean; basicAuthUsername: string | null;
   hardening: RuleHardening;
   routing: RuleRouting;
+  signIn?: RuleSignIn | null;
   /**
    * Optimistic-concurrency token. Pass it back on update/delete so an edit made
    * from a stale copy is rejected rather than silently overwriting whoever
@@ -142,6 +148,8 @@ export interface RuleInput {
   hardening?: RuleHardening | null;
   /** Omitted or null leaves the rule's routing as it is; sent, both fields are written. */
   routing?: RuleRouting | null;
+  /** Omitted or null leaves the rule's sign-in as it is; sent, it replaces it. */
+  signIn?: RuleSignInInput | null;
 }
 /** `permissions` is the effective set: the role's, narrowed to the key's scopes. `key` is set when signed in with a key. */
 export interface WhoAmI {

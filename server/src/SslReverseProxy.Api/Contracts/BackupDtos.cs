@@ -14,7 +14,7 @@ public sealed record BackupRule(
     Guid Id, string? Domain, string? UpstreamUrl, bool EnableTls, bool Enabled,
     string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute,
     string? BasicAuthUsername, string? BasicAuthPasswordHash,
-    RuleHardeningRequest? Hardening, RuleRoutingRequest? Routing);
+    RuleHardeningRequest? Hardening, RuleRoutingRequest? Routing, RuleSignInRequest? SignIn = null);
 
 /// <summary>Source Manual is a name registered by hand; Rule is a TLS rule's host, kept for its chosen challenge.</summary>
 public sealed record BackupCertificate(Guid Id, string? Domain, string? Source, string? Challenge);
