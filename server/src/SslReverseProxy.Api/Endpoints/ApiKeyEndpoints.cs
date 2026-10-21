@@ -30,6 +30,15 @@ public static class ApiKeyEndpoints
             return Results.Ok(rows.OrderByDescending(k => k.CreatedAt).Select(k => k.ToDto()));
         });
 
+        // Who a key can be issued to, for the key form: active users and their current roles. It sits under
+        // ApiKeyManage so the form needs no permission the keys feature does not.
+        keys.MapGet("/owners", async (AppDbContext db, CancellationToken ct) =>
+        {
+            var users = await db.Users.AsNoTracking().Where(u => u.IsActive).ToListAsync(ct);
+            return Results.Ok(users.OrderBy(u => u.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(u => new ApiKeyOwnerDto(u.Id, u.Name, u.Role.ToString())));
+        });
+
         keys.MapGet("/options", () => Results.Ok(new ApiKeyOptionsDto(
             [.. ApiKeyScopes.LifetimeDays], ApiKeyScopes.DefaultLifetimeDays, ApiKeyScopes.MaxLifetimeDays,
             ApiKeyScopes.Presets.Select(p => new ApiKeyPresetDto(
@@ -98,7 +107,7 @@ public static class ApiKeyEndpoints
 
     /// <summary>
     /// Null when the lifetime and scopes may be issued to <paramref name="owner"/> by <paramref name="me"/>;
-    /// otherwise the refusal. Exactly one of a listed day count or a date; scopes within the owner's role and
+    /// otherwise the refusal. An active owner; exactly one of a listed day count or a date; scopes within the owner's role and
     /// the caller's permissions. Null scope names mean full access, resolved here to the owner's role as it is
     /// now within the caller's permissions, so a later promotion of the owner does not widen the key.
     /// <paramref name="kept"/> takes a rotated key's own day count, which need not be a listed one.
@@ -111,6 +120,8 @@ public static class ApiKeyEndpoints
         scopes = new HashSet<Permission>();
         var max = TimeSpan.FromDays(ApiKeyScopes.MaxLifetimeDays);
         var listed = string.Join(", ", ApiKeyScopes.LifetimeDays);
+        if (!owner.IsActive)
+            return Invalid("userId", $"{owner.Name} is inactive; a key is issued only to an active user.");
 
         switch (lifetimeDays, requestedExpiry)
         {

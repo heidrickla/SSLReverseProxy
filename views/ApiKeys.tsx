@@ -21,10 +21,11 @@ const stateStyle: Record<KeyState, string> = {
 type Dialog = { kind: 'create' } | { kind: 'rotate'; key: ApiKey } | { kind: 'issued'; issued: IssuedApiKey; rotated: boolean };
 
 const ApiKeys: React.FC = () => {
-  const { currentUser, users } = useAuth();
+  const { currentUser } = useAuth();
   const scrollRef = useHorizontalScroll();
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [options, setOptions] = useState<ApiKeyOptions | null>(null);
+  const [owners, setOwners] = useState<KeyOwner[]>([]);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
   const [showInactive, setShowInactive] = useState(false);
@@ -32,9 +33,10 @@ const ApiKeys: React.FC = () => {
 
   const load = useCallback(async () => {
     try {
-      const [k, o] = await Promise.all([api.apiKeys.list(), api.apiKeys.options()]);
+      const [k, o, w] = await Promise.all([api.apiKeys.list(), api.apiKeys.options(), api.apiKeys.owners()]);
       setKeys(k);
       setOptions(o);
+      setOwners(w);
     } catch (e) {
       setError(apiErrorMessage(e, 'Could not load the API keys.'));
     }
@@ -42,9 +44,6 @@ const ApiKeys: React.FC = () => {
 
   useEffect(() => { void load(); }, [load]);
 
-  const owners: KeyOwner[] = users.length > 0
-    ? users.map(u => ({ id: u.id, name: u.name, role: u.role }))
-    : currentUser ? [{ id: currentUser.id, name: currentUser.name, role: currentUser.role }] : [];
   const caller = { permissions: currentUser?.permissions ?? [] };
   const now = new Date();
   const visible = (keys ?? []).filter(k => showInactive || keyState(k, now) === 'active' || keyState(k, now) === 'expiring');

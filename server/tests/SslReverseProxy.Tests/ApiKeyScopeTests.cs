@@ -423,6 +423,37 @@ public class ApiKeyScopeTests : IDisposable
         _factory.Db(db => db.Users.Where(u => u.Id == viewer).ExecuteUpdate(s => s.SetProperty(u => u.Role, Role.Editor)));
         Assert.Equal("Editor", await OwnerRole());
     }
+
+    [Fact]
+    public async Task TheOwnerList_NeedsOnlyApiKeyManage_AndListsActiveUsersWithTheirRoles()
+    {
+        var (_, adminId) = _factory.WithKey();
+        var viewer = NewUser(Role.Viewer);
+        var gone = NewUser(Role.Editor);
+        _factory.Db(db => db.Users.Where(u => u.Id == gone).ExecuteUpdate(s => s.SetProperty(u => u.IsActive, false)));
+        var manager = await Scoped(adminId, "ApiKeyManage");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await manager.GetAsync("/api/users")).StatusCode);
+        var owners = (await Json(await manager.GetAsync("/api/apikeys/owners"))).AsArray();
+        Assert.Equal("Viewer", (string)owners.Single(o => (string)o!["id"]! == viewer.ToString())!["role"]!);
+        Assert.DoesNotContain(owners, o => (string)o!["id"]! == gone.ToString());
+        Assert.Contains(owners, o => (string)o!["id"]! == adminId.ToString());
+    }
+
+    [Fact]
+    public async Task AKeyIsIssuedAndRotatedOnlyForAnActiveOwner()
+    {
+        var (admin, _) = _factory.WithKey();
+        var owner = NewUser(Role.Editor);
+        var issued = await Issue(admin, owner, new[] { "ServerRead" });
+        _factory.Db(db => db.Users.Where(u => u.Id == owner).ExecuteUpdate(s => s.SetProperty(u => u.IsActive, false)));
+
+        var create = await admin.PostAsJsonAsync("/api/apikeys",
+            new { userId = owner, name = "inactive", lifetimeDays = 30, scopes = new[] { "ServerRead" } });
+        Assert.Equal(HttpStatusCode.BadRequest, create.StatusCode);
+        var rotate = await admin.PostAsync($"/api/apikeys/{(string)issued["id"]!}/rotate", null);
+        Assert.Equal(HttpStatusCode.BadRequest, rotate.StatusCode);
+    }
 }
 
 public class ApiKeyScopeUnitTests

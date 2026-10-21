@@ -164,6 +164,8 @@ export interface ApiKey {
   id: string; name: string; prefix: string; userId: string; userName: string; userRole: string; createdAt: string;
   expiresAt: string | null; revokedAt: string | null; lastUsedAt: string | null; scopes: string[] | null;
 }
+/** An active user a key can be issued to, with the current role. */
+export interface ApiKeyOwner { id: string; name: string; role: string; }
 export interface IssuedApiKey { id: string; name: string; token: string; expiresAt: string | null; scopes: string[] | null; }
 export interface ApiKeyPreset { id: string; name: string; description: string; scopes: string[] | null; }
 export interface ApiKeyOptions {
@@ -350,6 +352,7 @@ export const api = {
   apiKeys: {
     list: () => request<ApiKey[]>('GET', '/api/apikeys'),
     options: () => request<ApiKeyOptions>('GET', '/api/apikeys/options'),
+    owners: () => request<ApiKeyOwner[]>('GET', '/api/apikeys/owners'),
     create: (userId: string, name: string, grant: ApiKeyGrant) =>
       request<IssuedApiKey>('POST', '/api/apikeys', { userId, name, ...grant }),
     rotate: (id: string, grant: ApiKeyGrant) => request<IssuedApiKey>('POST', `/api/apikeys/${id}/rotate`, grant),

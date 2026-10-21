@@ -171,6 +171,8 @@ public sealed record UserDto(Guid Id, string Name, string Email, string Role, bo
 /// </summary>
 public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, Guid UserId, string UserName, string UserRole, DateTimeOffset CreatedAt,
     DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, string[]? Scopes);
+/// <summary>A user a key can be issued to: active, with the current role.</summary>
+public sealed record ApiKeyOwnerDto(Guid Id, string Name, string Role);
 public sealed record IssuedApiKeyDto(Guid Id, string Name, string Token, DateTimeOffset? ExpiresAt, string[]? Scopes);
 public sealed record ApiKeyPresetDto(string Id, string Name, string Description, string[]? Scopes);
 /// <summary>What the key form offers: lifetimes in days, presets, every permission, and each role's permissions.</summary>
