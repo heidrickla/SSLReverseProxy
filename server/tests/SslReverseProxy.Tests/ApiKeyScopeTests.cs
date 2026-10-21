@@ -261,11 +261,16 @@ public class ApiKeyScopeTests : IDisposable
     public async Task ConcurrentRotations_OfOneKey_IssueOneNewKey()
     {
         var (admin, adminId) = _factory.WithKey();
-        var old = await Issue(admin, adminId, new[] { "ServerRead" });
-        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ =>
-            admin.PostAsync($"/api/apikeys/{(string)old["id"]!}/rotate", null)));
-        Assert.Single(results, r => r.StatusCode == HttpStatusCode.OK);
-        Assert.Equal(2, _factory.Db(db => db.ApiKeys.Count(k => k.Name == "scoped")));
+        for (var round = 0; round < 5; round++)
+        {
+            var r = await admin.PostAsJsonAsync("/api/apikeys",
+                new { userId = adminId, name = $"race {round}", lifetimeDays = 30, scopes = new[] { "ServerRead" } });
+            var id = (string)(await Json(r))["id"]!;
+            var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+                admin.PostAsync($"/api/apikeys/{id}/rotate", null)));
+            Assert.Single(results, x => x.StatusCode == HttpStatusCode.OK);
+            Assert.Equal(2, _factory.Db(db => db.ApiKeys.Count(k => k.Name == $"race {round}")));
+        }
     }
 
     [Fact]
