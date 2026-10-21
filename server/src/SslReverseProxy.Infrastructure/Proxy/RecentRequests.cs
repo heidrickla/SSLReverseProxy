@@ -62,7 +62,7 @@ public sealed partial class RecentRequests
             var oldest = Math.Max(1, _seq - Capacity + 1);
             for (var s = newest; s >= oldest; s--)
             {
-                if (_ring[s % Capacity] is not { } e || e.Seq != s) continue;
+                if (_ring[s % Capacity] is not { } e) continue;
                 if (e.At < cutoff) break;
                 if (e.RuleId != ruleId || !status(e.Status)) continue;
                 if (found.Count == take) { next = found[^1].Seq; break; }
