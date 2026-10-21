@@ -15,7 +15,7 @@ server/
 
 The control service (`IProxyController`, `CaddyProxyController`) runs Caddy as a child process and pushes configuration to Caddy's loopback-only admin API. Caddy does ACME and automatic HTTPS.
 
-Caddy's config is built from the rules, certificate rows and renewal marks. `ProxyChanges` runs every change to what Caddy holds one at a time: start, stop, reload, rollback, Renew, certificate writes, the conflict check and save of a rule write, and the certificate monitor's renewal decisions and cleanup. Each reads the rows it decides on inside its turn, and nothing else starts, stops or pushes to Caddy. The monitor's TLS readings are taken outside a turn; a reading taken before a renewal was requested does not end it.
+Caddy's config is built from the rules, certificate rows and renewal marks. `ProxyChanges` runs every change to what Caddy holds one at a time: start, stop, reload, rollback, Renew, certificate writes, a rule write's server check, conflict check and save, server and rule deletes, and the certificate monitor's renewal decisions and cleanup. Each reads the rows it decides on inside its turn, and nothing else starts, stops or pushes to Caddy. A Caddy admin call times out after 30 s, so a stalled Caddy holds a turn at most that long. The monitor's TLS readings are taken outside a turn; a reading taken before a renewal was requested does not end it.
 
 ## Security model
 

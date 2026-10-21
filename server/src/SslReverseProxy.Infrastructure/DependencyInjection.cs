@@ -40,7 +40,7 @@ public static class DependencyInjection
             });
         });
 
-        services.AddHttpClient("caddy-admin");
+        services.AddHttpClient("caddy-admin", c => c.Timeout = CaddyProxyController.AdminRequestTimeout);
         services.AddHttpClient("upstream-health");
 
         services.Configure<AlertOptions>(config.GetSection(AlertOptions.SectionName));

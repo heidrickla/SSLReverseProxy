@@ -578,6 +578,58 @@ public class CertificateMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task AStartWhileCaddyRuns_LeavesARefusedCleanupToRetry()
+    {
+        var client = _factory.Authed();
+        await AddRule("a.example.com");
+        Serve("a.example.com", "0A");
+        await Check();
+        var id = (await Row("a.example.com"))!.Id;
+        Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/certificates/{id}/renew", null)).StatusCode);
+
+        Serve("a.example.com", "0B");
+        _factory.Proxy.RefuseConfig = true;
+        var monitor = _factory.Services.GetRequiredService<CertificateMonitor>();
+        Assert.True(await monitor.CheckAllAsync(CancellationToken.None));
+        // Caddy is up, so the start loads nothing, and its plan push is refused too.
+        await client.PostAsync("/api/proxy/start", null);
+        _factory.Proxy.RefuseConfig = false;
+
+        var applied = _factory.Proxy.Applied.Count;
+        Assert.False(await monitor.CheckAllAsync(CancellationToken.None));
+        Assert.Equal(applied + 1, _factory.Proxy.Applied.Count);
+        Assert.False(_factory.Proxy.Applied.Last().Certificates.Single().RenewPending);
+    }
+
+    [Fact]
+    public async Task ARuleCreateQueuedBehindItsServersDelete_GetsNotFound()
+    {
+        var client = _factory.Authed();
+        var server = await client.PostAsJsonAsync("/api/servers", new { name = $"d-{Guid.NewGuid():N}", host = "10.0.0.9", os = "linux" });
+        var serverId = (await server.Content.ReadFromJsonAsync<JsonObject>())!["id"]!.GetValue<Guid>();
+
+        var held = await _factory.Services.GetRequiredService<ProxyChanges>().EnterAsync(CancellationToken.None);
+        var delete = client.DeleteAsync($"/api/servers/{serverId}");
+        Assert.NotSame(delete, await Task.WhenAny(delete, Task.Delay(TimeSpan.FromSeconds(1))));
+        var create = client.PostAsJsonAsync($"/api/servers/{serverId}/rules",
+            new { domain = "d.example.com", upstreamUrl = "http://10.0.0.20:8080", enableTls = true, enabled = true });
+        Assert.NotSame(create, await Task.WhenAny(create, Task.Delay(TimeSpan.FromSeconds(1))));
+        held.Dispose();
+
+        Assert.Equal(HttpStatusCode.NoContent, (await delete.WaitAsync(TimeSpan.FromSeconds(10))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await create.WaitAsync(TimeSpan.FromSeconds(10))).StatusCode);
+        Assert.False(await WithDb(db => db.Rules.AnyAsync(r => r.ServerId == serverId)));
+    }
+
+    [Fact]
+    public void ACaddyAdminCall_IsBoundedWellUnderTheDefault()
+    {
+        var client = _factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("caddy-admin");
+        Assert.Equal(CaddyProxyController.AdminRequestTimeout, client.Timeout);
+        Assert.True(client.Timeout <= TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
     public async Task AReadingTakenBeforeARenewal_DoesNotEndIt()
     {
         var client = _factory.Authed();
@@ -604,7 +656,7 @@ public class CertificateMonitorTests : IDisposable
     public static TheoryData<string> Changes =>
     [
         "create rule", "update rule", "enable rule", "renew", "rollback", "reload", "start", "stop",
-        "add certificate", "change certificate", "delete certificate",
+        "add certificate", "change certificate", "delete certificate", "delete rule", "delete server",
     ];
 
     [Theory]
@@ -648,6 +700,8 @@ public class CertificateMonitorTests : IDisposable
             "add certificate" => client.PostAsJsonAsync("/api/certificates", new { domain = "n.example.com", challenge = "Http" }),
             "change certificate" => client.PutAsJsonAsync($"/api/certificates/{manual}", new { challenge = "Http" }),
             "delete certificate" => client.DeleteAsync($"/api/certificates/{manual}"),
+            "delete rule" => client.DeleteAsync($"/api/servers/{serverId}/rules/{ruleId}"),
+            "delete server" => client.DeleteAsync($"/api/servers/{serverId}"),
             _ => throw new ArgumentOutOfRangeException(nameof(change)),
         };
 

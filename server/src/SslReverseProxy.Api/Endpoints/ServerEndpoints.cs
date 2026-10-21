@@ -53,8 +53,10 @@ public static class ServerEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerWrite));
 
         servers.MapDelete("/{id:guid}", async (
-            Guid id, AppDbContext db, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
+            Guid id, AppDbContext db, ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
+            // Deleting a server deletes its rules.
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             var server = await db.Servers.FindAsync([id], ctx.RequestAborted);
             if (server is null) return Results.NotFound();
             db.Servers.Remove(server);
@@ -73,9 +75,6 @@ public static class ServerEndpoints
             Guid serverId, CreateRuleRequest req, AppDbContext db, ProxyTargetValidator validator,
             ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {
-            if (!await db.Servers.AnyAsync(s => s.Id == serverId, ctx.RequestAborted))
-                return Results.NotFound();
-
             var problem = ValidateRule(req.Domain, req.UpstreamUrl, validator, req.AllowedCidrs, req.DeniedCidrs,
                 req.RateLimitPerMinute, req.BasicAuthUsername, req.BasicAuthPassword, req.Hardening, req.Routing,
                 existingAdditionalUpstreams: null, isCreate: true);
@@ -98,6 +97,8 @@ public static class ServerEndpoints
             ApplyRouting(rule, req.Routing);
             if (PlaceholderProblem(rule) is { } braced) return braced;
             using var change = await changes.EnterAsync(ctx.RequestAborted);
+            if (!await db.Servers.AnyAsync(s => s.Id == serverId, ctx.RequestAborted))
+                return Results.NotFound();
             if (await ConflictProblemAsync(db, rule, ctx.RequestAborted) is { } clash) return clash;
             db.Rules.Add(rule);
             await db.SaveChangesAsync(ctx.RequestAborted);
@@ -193,8 +194,10 @@ public static class ServerEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead));
 
         servers.MapDelete("/{serverId:guid}/rules/{ruleId:guid}", async (
-            Guid serverId, Guid ruleId, AppDbContext db, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
+            Guid serverId, Guid ruleId, AppDbContext db, ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me,
+            HttpContext ctx) =>
         {
+            using var change = await changes.EnterAsync(ctx.RequestAborted);
             var rule = await db.Rules.FirstOrDefaultAsync(r => r.Id == ruleId && r.ServerId == serverId, ctx.RequestAborted);
             if (rule is null) return Results.NotFound();
             if (CheckIfMatch(ctx, rule.Version, required: false) is { } precondition)

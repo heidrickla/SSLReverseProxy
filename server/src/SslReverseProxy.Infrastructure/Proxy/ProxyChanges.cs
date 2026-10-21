@@ -42,7 +42,13 @@ public sealed class ProxyChanges(IProxyController proxy)
         public async Task<ProxyStatus> ApplyRawAsync(string configJson, CancellationToken ct) =>
             Taken(await Owner.Proxy.ApplyRawConfigAsync(configJson, ct));
 
-        public async Task<ProxyStatus> StartAsync(CancellationToken ct) => Taken(await Owner.Proxy.StartAsync(ct));
+        /// <summary>Starts Caddy. A process already running keeps its config, so only a new one counts as taken.</summary>
+        public async Task<ProxyStatus> StartAsync(CancellationToken ct)
+        {
+            var running = (await Owner.Proxy.GetStatusAsync(ct)).State == ProxyState.Running;
+            var status = await Owner.Proxy.StartAsync(ct);
+            return running ? status : Taken(status);
+        }
 
         public async Task<ProxyStatus> StopAsync(CancellationToken ct)
         {
@@ -55,6 +61,7 @@ public sealed class ProxyChanges(IProxyController proxy)
         public void PolicyLeftBehind() => Owner._policyStale = true;
 
         // A plan pushed in a scope carries only the policies the rows want, and a snapshot or a new process none.
+        // Called only after an act that replaced Caddy's config.
         private ProxyStatus Taken(ProxyStatus status)
         {
             if (status.State == ProxyState.Running) Owner._policyStale = false;

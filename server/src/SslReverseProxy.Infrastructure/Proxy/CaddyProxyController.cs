@@ -19,6 +19,8 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
 {
     private static readonly TimeSpan AdminStartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ScrapeTimeout = TimeSpan.FromSeconds(5);
+    /// <summary>Bounds every admin call, so a stalled Caddy holds a <see cref="ProxyChanges"/> scope at most this long.</summary>
+    public static readonly TimeSpan AdminRequestTimeout = TimeSpan.FromSeconds(30);
 
     private readonly ProxyOptions _options;
     private readonly IHttpClientFactory _httpFactory;
