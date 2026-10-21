@@ -124,7 +124,8 @@ internal sealed class SoftAuthenticator
     }
 }
 
-internal sealed class PasskeyFactory(bool enabled = true, int signInsPerMinute = 1000, IInterceptor? interceptor = null)
+internal sealed class PasskeyFactory(bool enabled = true, int signInsPerMinute = 1000, IInterceptor? interceptor = null,
+    IReadOnlyDictionary<string, string?>? settings = null)
     : WebApplicationFactory<Program>
 {
     public const string RpId = "localhost";
@@ -179,7 +180,7 @@ internal sealed class PasskeyFactory(bool enabled = true, int signInsPerMinute =
                 ["Passkeys:RelyingPartyId"] = enabled ? RpId : "",
                 ["Passkeys:Origins:0"] = Origin,
                 ["Passkeys:SignInsPerMinute"] = signInsPerMinute.ToString(),
-            }));
+            }).AddInMemoryCollection(settings ?? new Dictionary<string, string?>()));
         return base.CreateHost(builder);
     }
 

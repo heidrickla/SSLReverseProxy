@@ -26,7 +26,7 @@ Caddy's config is built from the rules, certificate rows and renewal marks. `Pro
 | API-key storage | PBKDF2-SHA256 hash, per-key salt and server pepper only. Plaintext shown once at creation. Constant-time verification. |
 | Per-rule sign-in | Forward auth to Authelia, Authentik or oauth2-proxy, or a Cloudflare Access token checked by this service. Identity headers reach the upstream only from the provider's answer. |
 | Authorization | Deny-by-default. Every endpoint requires a permission; roles map to permissions server-side (`Core/Security/Permissions.cs`). An API key's scopes narrow its owner's current role, checked on every request. |
-| Request order | State-changing requests run one at a time, from before authentication through the effect and its audit row: every method but GET, HEAD and OPTIONS, plus backup export, `GET /api/instance` and the bootstrap-key claim. Reads and the event stream run beside them. A request outside this order cannot write to the database, apart from authentication recording a key's use or ending a stale session. |
+| Request order | State-changing requests run one at a time, from before authentication through the effect and its audit row: every method but GET, HEAD and OPTIONS, plus backup export, `GET /api/instance` and the bootstrap-key claim. Reads and the event stream run beside them. A request's body is read before its turn and its response sent after it; the work in its turn stops at `Security:StateChangeSeconds` with 503. A request outside this order cannot write to the database, apart from authentication recording a key's use or ending a stale session. |
 | SSRF | Every upstream is validated server-side (`ProxyTargetValidator`): http(s) only, cloud-metadata and link-local blocked, private and loopback gated by policy. |
 | Transport | HSTS and HTTPS redirect in Production; security headers and a JSON-only CSP on every response. |
 | Abuse | Per-IP fixed-window rate limit, `Security:RequestsPerMinute` (100). Anonymous passkey ceremonies have their own per-IP limits; at most 1000 are pending, each for 2 minutes. |
@@ -46,6 +46,7 @@ Caddy's config is built from the rules, certificate rows and renewal marks. `Pro
 | `Security:CorsAllowedOrigins` | SPA origins; empty allows no cross-origin access. |
 | `Security:TrustedProxies` | Proxies in front of the control API whose `X-Forwarded-For` is honoured. |
 | `Security:RequestsPerMinute` | Requests one client IP may make in a minute before it gets 429 (100). |
+| `Security:StateChangeSeconds` | Seconds a state-changing request may run in its turn before it is stopped with 503 (120). |
 | `Proxy:CaddyPath`, `Proxy:AdminEndpoint` | Caddy binary and its admin endpoint (loopback). |
 | `Proxy:AcmeContactEmail`, `Proxy:UseAcmeStaging` | ACME account email and Let's Encrypt staging. |
 | `Proxy:CertificateIssuer` | `acme` (default: Let's Encrypt with `AcmeContactEmail` or `UseAcmeStaging`, Caddy's default issuers with neither) or `internal` (Caddy's own CA; its root is not installed in the host trust store). |

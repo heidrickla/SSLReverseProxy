@@ -39,6 +39,9 @@ public sealed class SecurityOptions
 
     /// <summary>Requests a client IP may make in a minute before it gets 429.</summary>
     public int RequestsPerMinute { get; set; } = 100;
+
+    /// <summary>Seconds a state-changing request may run under the request gate before it is stopped.</summary>
+    public int StateChangeSeconds { get; set; } = 120;
 }
 
 /// <summary>

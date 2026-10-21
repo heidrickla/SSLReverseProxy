@@ -1,17 +1,26 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using SslReverseProxy.Api.Auth;
+using SslReverseProxy.Api.Security;
 using SslReverseProxy.Core.Domain;
+using SslReverseProxy.Core.Security;
+using SslReverseProxy.Infrastructure.Proxy;
+using SslReverseProxy.Infrastructure.Security;
 using SslReverseProxy.Infrastructure.Persistence;
 using Xunit;
 
@@ -227,6 +236,25 @@ public class RequestGateTests
     }
 
     [Fact]
+    public async Task AChangeStalledPastTheDeadline_IsStopped_AndTheNextChangeRuns()
+    {
+        var step = new StepGate();
+        using var f = new PasskeyFactory(interceptor: step,
+            settings: new Dictionary<string, string?> { ["Security:StateChangeSeconds"] = "1" });
+        var (admin, _) = f.WithKey();
+        var owner = NewUser(f, Role.Admin);
+
+        step.HoldUserRead(1); // the create's read of the owner, never released
+        var create = admin.PostAsJsonAsync("/api/apikeys", new { userId = owner, name = "stalled", lifetimeDays = 30 });
+        Assert.True(await FinishesWithin(create, TimeSpan.FromSeconds(15)), "a stalled change held the gate");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await create).StatusCode);
+        Assert.Equal(0, f.Db(db => db.ApiKeys.Count(k => k.UserId == owner)));
+        var next = admin.PostAsJsonAsync("/api/users", new { name = "", email = "" });
+        Assert.True(await FinishesWithin(next, TimeSpan.FromSeconds(10)), "the gate stayed with the stopped change");
+        Assert.Equal(HttpStatusCode.BadRequest, (await next).StatusCode);
+    }
+
+    [Fact]
     public async Task TheAppRefusesAWriteFromARequestOutsideTheGate()
     {
         using var f = new PasskeyFactory();
@@ -315,6 +343,9 @@ public class RequestWriteGuardTests : IDisposable
 
     private static DefaultHttpContext Request(string method) => new() { Request = { Method = method, Path = "/api/x" } };
 
+    private static RequestGateMiddleware Gated(RequestDelegate next, RequestGate gate, int seconds = 120) =>
+        new(next, gate, new SecurityOptions { StateChangeSeconds = seconds });
+
     [Fact]
     public async Task WorkOutsideARequest_Writes()
     {
@@ -344,7 +375,7 @@ public class RequestWriteGuardTests : IDisposable
         {
             var ctx = Request(method);
             _accessor.HttpContext = ctx;
-            var run = new RequestGateMiddleware(_ => AddUser(), gate).InvokeAsync(ctx);
+            var run = Gated(_ => AddUser(), gate).InvokeAsync(ctx);
             Assert.True(await FinishesWithin(run, TimeSpan.FromSeconds(10)), "the gate was not released");
             Assert.False(RequestGate.Holds(ctx));
         }
@@ -353,17 +384,80 @@ public class RequestWriteGuardTests : IDisposable
     }
 
     [Fact]
+    public async Task AnUploadInProgressDoesNotHoldTheGate()
+    {
+        var gate = new RequestGate();
+        var upload = new HeldStream();
+        var uploading = Request("POST");
+        uploading.Request.Body = upload;
+        var ran = false;
+        var first = Gated(_ => { ran = true; return Task.CompletedTask; }, gate).InvokeAsync(uploading);
+        await upload.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var next = Request("POST");
+        Assert.True(await FinishesWithin(Gated(_ => Task.CompletedTask, gate).InvokeAsync(next), TimeSpan.FromSeconds(10)),
+            "a request waited for another's upload");
+        Assert.False(ran);
+        upload.Release();
+        await first.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task ADownloadInProgressDoesNotHoldTheGate()
+    {
+        var gate = new RequestGate();
+        var download = new HeldStream();
+        var downloading = Request("POST");
+        downloading.Features.Set<IHttpResponseBodyFeature>(new StreamResponseBodyFeature(download));
+        var first = Gated(ctx => ctx.Response.WriteAsync("done", ctx.RequestAborted), gate).InvokeAsync(downloading);
+        await download.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var next = Request("POST");
+        Assert.True(await FinishesWithin(Gated(_ => Task.CompletedTask, gate).InvokeAsync(next), TimeSpan.FromSeconds(10)),
+            "a request waited for another's download");
+        download.Release();
+        await first.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("done", download.Written());
+    }
+
+    [Fact]
+    public async Task WorkPastTheDeadlineIsStopped_AndReleasesTheGate()
+    {
+        var gate = new RequestGate();
+        var stalled = Request("POST");
+        stalled.RequestServices = new ServiceCollection().AddLogging().AddProblemDetails().BuildServiceProvider();
+        stalled.Response.Headers["X-Before"] = "kept";
+        var body = new MemoryStream();
+        stalled.Features.Set<IHttpResponseBodyFeature>(new StreamResponseBodyFeature(body));
+        var run = Gated(async ctx =>
+        {
+            ctx.Response.Headers["X-Endpoint"] = "dropped";
+            await ctx.Response.WriteAsync("partial", ctx.RequestAborted);
+            await Task.Delay(Timeout.Infinite, ctx.RequestAborted);
+        }, gate, seconds: 1).InvokeAsync(stalled);
+
+        Assert.True(await FinishesWithin(run, TimeSpan.FromSeconds(10)), "stalled work was not stopped");
+        await run;
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, stalled.Response.StatusCode);
+        Assert.Equal("kept", stalled.Response.Headers["X-Before"]);
+        Assert.False(stalled.Response.Headers.ContainsKey("X-Endpoint"));
+        Assert.DoesNotContain("partial", Encoding.UTF8.GetString(body.ToArray()));
+        Assert.True(await FinishesWithin(Gated(_ => Task.CompletedTask, gate).InvokeAsync(Request("POST")), TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
     public async Task AFailedRequestReleasesTheGate()
     {
         var gate = new RequestGate();
         var failing = Request("POST");
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new RequestGateMiddleware(_ => throw new InvalidOperationException("endpoint failed"), gate).InvokeAsync(failing));
+            Gated(_ => throw new InvalidOperationException("endpoint failed"), gate).InvokeAsync(failing));
         Assert.False(RequestGate.Holds(failing));
 
         var next = Request("POST");
         _accessor.HttpContext = next;
-        var run = new RequestGateMiddleware(_ => AddUser(), gate).InvokeAsync(next);
+        var run = Gated(_ => AddUser(), gate).InvokeAsync(next);
         Assert.True(await FinishesWithin(run, TimeSpan.FromSeconds(10)), "the gate stayed with the failed request");
         _accessor.HttpContext = null;
         Assert.Equal(1, await Users());
@@ -379,7 +473,7 @@ public class RequestWriteGuardTests : IDisposable
         await gate.WaitAsync(CancellationToken.None);
         var ctx = Request(method);
         _accessor.HttpContext = ctx;
-        var run = new RequestGateMiddleware(_ => Refused(), gate).InvokeAsync(ctx);
+        var run = Gated(_ => Refused(), gate).InvokeAsync(ctx);
         Assert.True(await FinishesWithin(run, TimeSpan.FromSeconds(10)), "a read waited for the gate");
         await run;
     }
@@ -391,7 +485,7 @@ public class RequestWriteGuardTests : IDisposable
         ctx.SetEndpoint(new Endpoint(null, new EndpointMetadataCollection(ChangesState.Instance), "marked"));
         Assert.True(RequestGate.Covers(ctx));
         _accessor.HttpContext = ctx;
-        await new RequestGateMiddleware(_ => AddUser(), new RequestGate()).InvokeAsync(ctx);
+        await Gated(_ => AddUser(), new RequestGate()).InvokeAsync(ctx);
         _accessor.HttpContext = null;
         Assert.Equal(1, await Users());
     }
@@ -413,4 +507,91 @@ public class RequestWriteGuardTests : IDisposable
     }
 
     private static async Task<bool> FinishesWithin(Task t, TimeSpan wait) => await Task.WhenAny(t, Task.Delay(wait)) == t;
+
+    // A client that stops mid-transfer: reads return nothing and writes complete only after Release.
+    private sealed class HeldStream : Stream
+    {
+        private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly MemoryStream _written = new();
+
+        public Task Reached => _reached.Task;
+        public void Release() => _release.TrySetResult();
+        public string Written() => Encoding.UTF8.GetString(_written.ToArray());
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            _reached.TrySetResult();
+            await _release.Task.WaitAsync(ct);
+            return 0;
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+        {
+            _reached.TrySetResult();
+            await _release.Task.WaitAsync(ct);
+            _written.Write(buffer.Span);
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) =>
+            ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct) =>
+            WriteAsync(buffer.AsMemory(offset, count), ct).AsTask();
+        public override Task FlushAsync(CancellationToken ct) => Task.CompletedTask;
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    }
+}
+
+public class CaddyValidateStopTests
+{
+    private sealed class NoHttp : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => throw new InvalidOperationException("no HTTP in this test");
+    }
+
+    [Fact]
+    public async Task AValidateWhoseRequestEnds_StopsAndReportsNoVerdict()
+    {
+        var dir = Directory.CreateTempSubdirectory("sslrp-hang-");
+        try
+        {
+            // A "caddy" that never answers.
+            string path;
+            if (OperatingSystem.IsWindows())
+            {
+                path = Path.Combine(dir.FullName, "caddy.cmd");
+                File.WriteAllText(path, $"@\"{Path.Combine(Environment.SystemDirectory, "PING.EXE")}\" -n 60 127.0.0.1 >nul\r\n");
+            }
+            else
+            {
+                path = Path.Combine(dir.FullName, "caddy");
+                File.WriteAllText(path, "#!/bin/sh\nexec sleep 60\n");
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            using var c = new CaddyProxyController(
+                Options.Create(new ProxyOptions { CaddyPath = path, ConfigDirectory = dir.FullName }),
+                new NoHttp(), NullLogger<CaddyProxyController>.Instance, TimeProvider.System, new TrafficRecorder(),
+                SecretRedactor.None, new CaddyCertificateLog(SecretRedactor.None, TimeProvider.System),
+                new RecentRequests(TimeProvider.System));
+            var plan = new ProxyPlan([new ProxyRule { Domain = "a.example.com", UpstreamUrl = "http://10.0.0.2", Enabled = true }]);
+
+            using var ended = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            var started = Stopwatch.StartNew();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => c.ValidateConfigurationAsync(plan, ended.Token));
+            Assert.True(started.Elapsed < TimeSpan.FromSeconds(20), $"validate returned after {started.Elapsed}");
+        }
+        finally
+        {
+            try { dir.Delete(recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
 }

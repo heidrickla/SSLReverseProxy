@@ -1,13 +1,18 @@
 using System.Data.Common;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using SslReverseProxy.Api.Security;
 
 namespace SslReverseProxy.Api.Auth;
 
 /// <summary>
 /// Runs state-changing requests one at a time, from before authentication through the effect and its audit row, so
 /// a change to who may do what lands wholly before or wholly after each of them. Reads and the event stream stay
-/// outside. The process is the only writer of its database, so one in-process gate covers every request.
+/// outside. The process is the only writer of its database, so one in-process gate covers every request. A holder
+/// does only server work: the request body is read before the gate, the response is sent after it, and the work
+/// between is stopped at <see cref="SecurityOptions.StateChangeSeconds"/>.
 /// </summary>
 public sealed class RequestGate
 {
@@ -43,7 +48,7 @@ public static class ChangesStateExtensions
         builder.WithMetadata(Auth.ChangesState.Instance);
 }
 
-public sealed class RequestGateMiddleware(RequestDelegate next, RequestGate gate)
+public sealed class RequestGateMiddleware(RequestDelegate next, RequestGate gate, SecurityOptions options)
 {
     public async Task InvokeAsync(HttpContext ctx)
     {
@@ -52,17 +57,51 @@ public sealed class RequestGateMiddleware(RequestDelegate next, RequestGate gate
             await next(ctx);
             return;
         }
-        await gate.WaitAsync(ctx.RequestAborted);
+
+        // The client paces its upload and its download, so neither happens while the gate is held.
+        var client = ctx.RequestAborted;
+        ctx.Request.EnableBuffering();
+        await ctx.Request.Body.DrainAsync(client);
+        ctx.Request.Body.Position = 0;
+        var responseBody = ctx.Features.Get<IHttpResponseBodyFeature>()!;
+        await using var buffered = new FileBufferingWriteStream();
+        var bufferedBody = new StreamResponseBodyFeature(buffered, responseBody);
+        var headers = ctx.Response.Headers.ToList();
+
+        await gate.WaitAsync(client);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(client);
+        deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, options.StateChangeSeconds)));
+        ctx.RequestAborted = deadline.Token;
+        ctx.Features.Set<IHttpResponseBodyFeature>(bufferedBody);
         ctx.Features.Set(RequestGate.Held.Instance);
+        var stopped = false;
         try
         {
             await next(ctx);
+            await bufferedBody.CompleteAsync();
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !client.IsCancellationRequested)
+        {
+            stopped = true;
         }
         finally
         {
             ctx.Features.Set<RequestGate.Held?>(null);
+            ctx.Features.Set(responseBody);
+            ctx.RequestAborted = client;
             gate.Release();
         }
+
+        if (stopped)
+        {
+            ctx.Response.Headers.Clear();
+            foreach (var (name, value) in headers) ctx.Response.Headers[name] = value;
+            await Results.Problem(title: "The change did not finish in time",
+                detail: $"It was stopped after {options.StateChangeSeconds} seconds and may have partly applied; the audit log shows what was recorded.",
+                statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(ctx);
+            return;
+        }
+        await buffered.DrainBufferAsync(responseBody.Stream, client);
     }
 }
 

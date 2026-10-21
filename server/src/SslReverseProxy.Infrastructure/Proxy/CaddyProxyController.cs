@@ -213,11 +213,20 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
                 var psi = CaddyEnvironment.StartInfo(_options, "validate", "--config", tmp);
                 using var proc = Process.Start(psi);
                 if (proc is null) return false;
-                // Both streams drained together, so neither pipe fills while the other is read.
-                var stdout = proc.StandardOutput.ReadToEndAsync(ct);
-                var stderr = await proc.StandardError.ReadToEndAsync(ct);
-                await stdout;
-                await proc.WaitForExitAsync(ct);
+                string stderr;
+                try
+                {
+                    // Both streams drained together, so neither pipe fills while the other is read.
+                    var stdout = proc.StandardOutput.ReadToEndAsync(ct);
+                    stderr = await proc.StandardError.ReadToEndAsync(ct);
+                    await stdout;
+                    await proc.WaitForExitAsync(ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { proc.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* exited */ }
+                    throw;
+                }
                 if (proc.ExitCode != 0)
                     issues.Add($"Caddy validation failed: {_redactor.Redact(stderr.Trim())}");
                 return proc.ExitCode == 0;
@@ -226,6 +235,10 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
             {
                 try { File.Delete(tmp); } catch { /* best effort */ }
             }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // the request ended, so it gets no verdict
         }
         catch (Exception ex)
         {

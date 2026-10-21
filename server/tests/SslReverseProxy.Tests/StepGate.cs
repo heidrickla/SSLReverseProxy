@@ -32,14 +32,14 @@ internal sealed class StepGate : IDbCommandInterceptor, IDbTransactionIntercepto
     public async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
         CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
     {
-        await Step(command.CommandText);
+        await Step(command.CommandText, cancellationToken);
         return result;
     }
 
     public async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
         CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
     {
-        await Step(command.CommandText);
+        await Step(command.CommandText, cancellationToken);
         return result;
     }
 
@@ -47,19 +47,20 @@ internal sealed class StepGate : IDbCommandInterceptor, IDbTransactionIntercepto
         TransactionStartingEventData eventData, InterceptionResult<DbTransaction> result,
         CancellationToken cancellationToken = default)
     {
-        if (Volatile.Read(ref _userReadSeen) == 1 && Interlocked.Exchange(ref _transactionArmed, 0) == 1) await Hold();
+        if (Volatile.Read(ref _userReadSeen) == 1 && Interlocked.Exchange(ref _transactionArmed, 0) == 1) await Hold(cancellationToken);
         return result;
     }
 
-    private async Task Step(string sql)
+    private async Task Step(string sql, CancellationToken ct)
     {
         if (UserReadById(sql) && Volatile.Read(ref _transactionArmed) == 1) Volatile.Write(ref _userReadSeen, 1);
-        if (_match(sql) && Interlocked.Decrement(ref _left) == 0) await Hold();
+        if (_match(sql) && Interlocked.Decrement(ref _left) == 0) await Hold(ct);
     }
 
-    private async Task Hold()
+    // The hold ends at Release, after 30 s, or when the request's work is cancelled.
+    private async Task Hold(CancellationToken ct)
     {
         _reached.TrySetResult();
-        await _release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await _release.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
     }
 }
