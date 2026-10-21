@@ -1,8 +1,11 @@
+using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -12,6 +15,7 @@ using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -601,6 +605,49 @@ public class RequestWriteGuardTests : IDisposable
         finally
         {
             upload.Release();
+        }
+    }
+
+    // The guard marks a write finished at ReaderExecuted, which holds while each command carries one statement.
+    [Fact]
+    public async Task ASaveSendsEachWriteAsItsOwnCommand()
+    {
+        var seen = new CommandRecorder();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(_conn).AddInterceptors(seen).Options;
+        await using var db = new AppDbContext(options);
+        var users = Enumerable.Range(0, 3)
+            .Select(i => new User { Name = $"u{i}", Email = $"{Guid.NewGuid():N}@example.com", Role = Role.Viewer }).ToList();
+        db.Users.AddRange(users);
+        await db.SaveChangesAsync();
+        users[0].Name = "renamed";
+        db.Users.Remove(users[1]);
+        db.Users.Add(new User { Name = "u3", Email = $"{Guid.NewGuid():N}@example.com", Role = Role.Viewer });
+        await db.SaveChangesAsync();
+
+        var writes = seen.Commands.Where(c => Statements(c) > 0).ToList();
+        Assert.Equal(6, writes.Count);
+        Assert.All(writes, c => Assert.Equal(1, Statements(c)));
+    }
+
+    private static int Statements(string sql) =>
+        Regex.Matches(sql, @"^\s*(INSERT|UPDATE|DELETE)\b", RegexOptions.Multiline | RegexOptions.IgnoreCase).Count;
+
+    private sealed class CommandRecorder : DbCommandInterceptor
+    {
+        public ConcurrentQueue<string> Commands { get; } = new();
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Commands.Enqueue(command.CommandText);
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            Commands.Enqueue(command.CommandText);
+            return ValueTask.FromResult(result);
         }
     }
 
