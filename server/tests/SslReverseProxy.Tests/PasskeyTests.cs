@@ -281,7 +281,8 @@ public class PasskeyTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden,
             (await Send(Req(HttpMethod.Post, "/api/proxy/validate", s, origin: "https://evil.example"))).StatusCode);
         var wrong = Req(HttpMethod.Post, "/api/proxy/validate", s, csrf: false);
-        wrong.Headers.Add(SessionTokens.CsrfHeader, s.Csrf[..^2] + "AA");
+        // One character off; a fixed tail would equal the real token once in 1024 runs.
+        wrong.Headers.Add(SessionTokens.CsrfHeader, (s.Csrf[0] == 'A' ? 'B' : 'A') + s.Csrf[1..]);
         Assert.Equal(HttpStatusCode.Forbidden, (await Send(wrong)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await Send(Req(HttpMethod.Post, "/api/proxy/validate", s))).StatusCode);
 
