@@ -61,6 +61,7 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAu
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        RequestWriteGuard.AllowAuthenticationWrites();
         // The proxied request's own credentials, which Caddy passes along to the sign-in checks.
         if (SignInEndpoints.IsSignInPath(Request.Path)) return AuthenticateResult.NoResult();
 

@@ -45,6 +45,7 @@ public static class AdminEndpoints
             return Results.Ok(new InstanceDto(instance.InstanceId, ApiContract.ApiVersion, [.. ApiContract.Capabilities]));
         })
             .RequireAuthorization()
+            .ChangesState() // creates the instance row if it is missing
             .WithTags("Meta");
 
         // Liveness probe — intentionally unauthenticated, returns no sensitive data.
@@ -69,7 +70,7 @@ public static class AdminEndpoints
             loggerFactory.CreateLogger("DbBootstrapper").LogWarning(
                 "Bootstrap API key was claimed via /api/bootstrap-key from {Ip}; it can no longer be claimed again.", ip);
             return Results.Ok(new { apiKey = token });
-        }).AllowAnonymous().ExcludeFromDescription();
+        }).AllowAnonymous().ChangesState().ExcludeFromDescription(); // the key is claimed once
 
         // Readiness probe — checks dependencies (DB + proxy). Unauthenticated but
         // returns only a coarse ready flag and the proxy state string.

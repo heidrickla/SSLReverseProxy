@@ -47,6 +47,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<RequestGate>();
+builder.Services.AddSingleton<RequestWriteGuard>();
+builder.Services.ConfigureDbContext<AppDbContext>((sp, o) => o.AddInterceptors(sp.GetRequiredService<RequestWriteGuard>()));
 builder.Services.AddScoped<ICurrentPrincipal, CurrentPrincipal>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 builder.Services.AddSingleton<IAuthorizationHandler, WholeRoleAuthorizationHandler>();
@@ -175,6 +178,7 @@ app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseWhen(ControlPlane, b => b.UseMiddleware<ClientCertificateMiddleware>()); // enforces mTLS when enabled
 app.UseRateLimiter();
 app.UseCors();
+app.UseMiddleware<RequestGateMiddleware>();
 app.UseAuthentication();
 app.UseMiddleware<SessionCsrfMiddleware>();
 app.UseAuthorization();

@@ -26,6 +26,7 @@ Caddy's config is built from the rules, certificate rows and renewal marks. `Pro
 | API-key storage | PBKDF2-SHA256 hash, per-key salt and server pepper only. Plaintext shown once at creation. Constant-time verification. |
 | Per-rule sign-in | Forward auth to Authelia, Authentik or oauth2-proxy, or a Cloudflare Access token checked by this service. Identity headers reach the upstream only from the provider's answer. |
 | Authorization | Deny-by-default. Every endpoint requires a permission; roles map to permissions server-side (`Core/Security/Permissions.cs`). An API key's scopes narrow its owner's current role, checked on every request. |
+| Request order | State-changing requests run one at a time, from before authentication through the effect and its audit row: every method but GET, HEAD and OPTIONS, plus backup export, `GET /api/instance` and the bootstrap-key claim. Reads and the event stream run beside them. A request outside this order cannot write to the database, apart from authentication recording a key's use or ending a stale session. |
 | SSRF | Every upstream is validated server-side (`ProxyTargetValidator`): http(s) only, cloud-metadata and link-local blocked, private and loopback gated by policy. |
 | Transport | HSTS and HTTPS redirect in Production; security headers and a JSON-only CSP on every response. |
 | Abuse | Per-IP fixed-window rate limit, `Security:RequestsPerMinute` (100). Anonymous passkey ceremonies have their own per-IP limits; at most 1000 are pending, each for 2 minutes. |

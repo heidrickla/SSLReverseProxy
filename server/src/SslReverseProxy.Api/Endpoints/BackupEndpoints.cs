@@ -30,7 +30,7 @@ public static class BackupEndpoints
                 details: $"rules={servers.Sum(s => s.Rules.Count)} certificates={certificates.Count}");
             ctx.Response.Headers.ContentDisposition = $"attachment; filename=\"sslrp-backup-{now.UtcDateTime:yyyyMMdd-HHmmss}.json\"";
             return Results.Json(BackupFormat.Export(servers, certificates, now), BackupFormat.Json);
-        });
+        }).ChangesState(); // writes an audit row
 
         // Stages the import on the rows inside a change scope, reports it and keeps nothing.
         backup.MapPost("/import/dry-run", async (

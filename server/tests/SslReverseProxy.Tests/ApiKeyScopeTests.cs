@@ -1,9 +1,7 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using SslReverseProxy.Api.Health;
@@ -470,9 +468,14 @@ public class ApiKeyScopeTests : IDisposable
     // Deactivation, then demotion out of the role the asked-for scopes need.
     public static TheoryData<bool, string> OwnerChanges => new() { { false, "Admin" }, { true, "Viewer" } };
 
+    // A change written outside the API, which the request gate does not cover.
+    private static Task ChangeOwner(PasskeyFactory factory, Guid owner, bool active, string role) => Task.Run(() =>
+        factory.Db(db => db.Users.Where(u => u.Id == owner).ExecuteUpdate(s => s
+            .SetProperty(u => u.IsActive, active).SetProperty(u => u.Role, Enum.Parse<Role>(role)))));
+
     [Theory]
     [MemberData(nameof(OwnerChanges))]
-    public async Task AChangeToTheOwnerWaitsWhileItsKeyIsIssued(bool active, string role)
+    public async Task AnOwnerChangeOutsideTheApiWaitsWhileItsKeyIsIssued(bool active, string role)
     {
         var gate = new StepGate();
         using var factory = new PasskeyFactory(interceptor: gate);
@@ -483,18 +486,18 @@ public class ApiKeyScopeTests : IDisposable
         var create = admin.PostAsJsonAsync("/api/apikeys",
             new { userId = owner, name = "racing", lifetimeDays = 30, scopes = AdminOnly });
         await gate.Reached.WaitAsync(TimeSpan.FromSeconds(10));
-        var change = admin.PutAsJsonAsync($"/api/users/{owner}", new { name = "Owner", role, isActive = active });
+        var change = ChangeOwner(factory, owner, active, role);
         var first = await Task.WhenAny(change, Task.Delay(TimeSpan.FromSeconds(1)));
         gate.Release();
 
         Assert.False(first == change, "the owner changed between the service's read and the key insert");
         Assert.Equal(HttpStatusCode.Created, (await create).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await change).StatusCode);
+        await change;
     }
 
     [Theory]
     [MemberData(nameof(OwnerChanges))]
-    public async Task AChangeToTheOwnerAfterTheEndpointReadIsRefusedAtIssue(bool active, string role)
+    public async Task AnOwnerChangeOutsideTheApiAfterTheEndpointReadIsRefusedAtIssue(bool active, string role)
     {
         var gate = new StepGate();
         using var factory = new PasskeyFactory(interceptor: gate);
@@ -505,8 +508,7 @@ public class ApiKeyScopeTests : IDisposable
         var create = admin.PostAsJsonAsync("/api/apikeys",
             new { userId = owner, name = "racing", lifetimeDays = 30, scopes = AdminOnly });
         await gate.Reached.WaitAsync(TimeSpan.FromSeconds(10));
-        var change = await admin.PutAsJsonAsync($"/api/users/{owner}", new { name = "Owner", role, isActive = active });
-        Assert.Equal(HttpStatusCode.OK, change.StatusCode);
+        await ChangeOwner(factory, owner, active, role).WaitAsync(TimeSpan.FromSeconds(10));
         gate.Release();
 
         Assert.Equal(HttpStatusCode.BadRequest, (await create).StatusCode);
@@ -528,48 +530,6 @@ public class ApiKeyScopeTests : IDisposable
             () => svc.CreateAsync(viewer, "k", null, [Permission.ServerRead, Permission.UserWrite]));
         Assert.Equal(0, _factory.Db(db => db.ApiKeys.Count(k => k.UserId == viewer || k.UserId == inactive)));
         await svc.CreateAsync(viewer, "k", null, [Permission.ServerRead]);
-    }
-}
-
-/// <summary>Holds one database step of a request until Release: the Nth read of a user by id, or the first
-/// transaction started after a read of a user by id.</summary>
-internal sealed class StepGate : IDbCommandInterceptor, IDbTransactionInterceptor
-{
-    private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private int _readsLeft = -1;
-    private int _transactionArmed;
-    private int _userReadSeen;
-
-    public Task Reached => _reached.Task;
-    public void HoldUserRead(int nth) => Volatile.Write(ref _readsLeft, nth);
-    public void HoldTransactionAfterUserRead() => Volatile.Write(ref _transactionArmed, 1);
-    public void Release() => _release.TrySetResult();
-
-    public async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
-        CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
-    {
-        var sql = command.CommandText;
-        if (sql.Contains("FROM \"Users\" AS \"u\"") && sql.Contains("WHERE \"u\".\"Id\" ="))
-        {
-            if (Volatile.Read(ref _transactionArmed) == 1) Volatile.Write(ref _userReadSeen, 1);
-            if (Interlocked.Decrement(ref _readsLeft) == 0) await Hold();
-        }
-        return result;
-    }
-
-    public async ValueTask<InterceptionResult<DbTransaction>> TransactionStartingAsync(DbConnection connection,
-        TransactionStartingEventData eventData, InterceptionResult<DbTransaction> result,
-        CancellationToken cancellationToken = default)
-    {
-        if (Volatile.Read(ref _userReadSeen) == 1 && Interlocked.Exchange(ref _transactionArmed, 0) == 1) await Hold();
-        return result;
-    }
-
-    private async Task Hold()
-    {
-        _reached.TrySetResult();
-        await _release.Task.WaitAsync(TimeSpan.FromSeconds(30));
     }
 }
 
