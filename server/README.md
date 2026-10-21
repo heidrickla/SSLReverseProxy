@@ -112,6 +112,8 @@ Meta
 - `GET /api/health`: anonymous liveness. `GET /api/ready`: anonymous readiness (database and proxy).
 - `GET /api/bootstrap-key`: one-time first-run key claim (Development and loopback only; 404 otherwise).
 - `GET /api/whoami`: current principal and its effective permissions (the role's, narrowed to a key's scopes); `key` holds the signing key's id, name, expiry and scopes.
+- `GET /api/instance`: `{instanceId, apiVersion, capabilities}` for any signed-in principal. The id is created on first start and does not change; `apiVersion` rises only for a change that breaks a client.
+- `GET /api/openapi/v1.json`: the OpenAPI document, for a principal with `ServerRead`, in every environment. It declares the `X-Api-Key` scheme and leaves out the bootstrap claim.
 - `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes, `certificate.status` when a certificate's does, `certificate.renewed` or `certificate.renew_failed` when a forced renewal ends, and `certificate.renew_cancelled` when a rollback stops one. Headers go out once the subscriber is registered, so no event published after the client has them is missed.
 
 Passkeys

@@ -315,3 +315,11 @@ public class AuditEntry
     public string? Details { get; set; } // JSON
     public bool Success { get; set; } = true;
 }
+
+/// <summary>This installation's identity: one row, created on first start and never changed.</summary>
+public class InstanceInfo
+{
+    public int Id { get; set; } = 1;
+    public Guid InstanceId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}

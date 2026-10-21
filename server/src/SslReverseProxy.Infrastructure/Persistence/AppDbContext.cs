@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<ConfigSnapshot> ConfigSnapshots => Set<ConfigSnapshot>();
     public DbSet<TrafficSample> TrafficSamples => Set<TrafficSample>();
+    public DbSet<InstanceInfo> Instance => Set<InstanceInfo>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -26,6 +27,8 @@ public class AppDbContext : DbContext
             e.Property(u => u.Name).HasMaxLength(200).IsRequired();
             e.Property(u => u.Email).HasMaxLength(320).IsRequired();
         });
+
+        b.Entity<InstanceInfo>(e => e.Property(i => i.Id).ValueGeneratedNever());
 
         b.Entity<ApiKey>(e =>
         {

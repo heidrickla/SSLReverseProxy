@@ -223,6 +223,22 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.ToTable("ConfigSnapshots");
                 });
 
+            modelBuilder.Entity("SslReverseProxy.Core.Domain.InstanceInfo", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("InstanceId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Instance");
+                });
+
             modelBuilder.Entity("SslReverseProxy.Core.Domain.PasskeyCredential", b =>
                 {
                     b.Property<Guid>("Id")

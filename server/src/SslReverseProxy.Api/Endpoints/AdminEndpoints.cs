@@ -35,6 +35,15 @@ public static class AdminEndpoints
             .RequireAuthorization()
             .WithTags("Meta");
 
+        // The installation's stable id and what this API offers, for clients that pair with it.
+        app.MapGet("/api/instance", async (AppDbContext db, TimeProvider clock, CancellationToken ct) =>
+        {
+            var instance = await InstanceIdentity.GetAsync(db, clock, ct);
+            return Results.Ok(new InstanceDto(instance.InstanceId, ApiContract.ApiVersion, [.. ApiContract.Capabilities]));
+        })
+            .RequireAuthorization()
+            .WithTags("Meta");
+
         // Liveness probe — intentionally unauthenticated, returns no sensitive data.
         app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }))
             .AllowAnonymous().WithTags("Meta");
@@ -57,7 +66,7 @@ public static class AdminEndpoints
             loggerFactory.CreateLogger("DbBootstrapper").LogWarning(
                 "Bootstrap API key was claimed via /api/bootstrap-key from {Ip}; it can no longer be claimed again.", ip);
             return Results.Ok(new { apiKey = token });
-        }).AllowAnonymous().WithTags("Meta");
+        }).AllowAnonymous().ExcludeFromDescription();
 
         // Readiness probe — checks dependencies (DB + proxy). Unauthenticated but
         // returns only a coarse ready flag and the proxy state string.

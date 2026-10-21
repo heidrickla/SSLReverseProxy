@@ -23,6 +23,7 @@ public static class DbBootstrapper
         var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("DbBootstrapper");
 
         await db.Database.MigrateAsync(ct);
+        await InstanceIdentity.GetAsync(db, scope.ServiceProvider.GetRequiredService<TimeProvider>(), ct);
 
         if (await db.Users.AnyAsync(ct))
             return;

@@ -8,10 +8,12 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using SslReverseProxy.Api.Alerts;
 using SslReverseProxy.Api.Auth;
+using SslReverseProxy.Api.Contracts;
 using SslReverseProxy.Api.Endpoints;
 using SslReverseProxy.Api.Health;
 using SslReverseProxy.Api.Security;
 using SslReverseProxy.Core.Abstractions;
+using SslReverseProxy.Core.Domain;
 using SslReverseProxy.Infrastructure;
 using SslReverseProxy.Infrastructure.Persistence;
 
@@ -139,8 +141,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
 });
 
 builder.Services.AddProblemDetails();
-if (builder.Environment.IsDevelopment())
-    builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(o => o.AddDocumentTransformer(OpenApiDescription.Describe));
 
 var app = builder.Build();
 
@@ -171,8 +172,8 @@ app.UseAuthentication();
 app.UseMiddleware<SessionCsrfMiddleware>();
 app.UseAuthorization();
 
-if (app.Environment.IsDevelopment())
-    app.MapOpenApi();
+// The API's own description, under /api so the edge that forwards /api serves it, for any principal that can read servers.
+app.MapOpenApi("/api/openapi/{documentName}.json").RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead));
 
 app.MapProxyEndpoints();
 app.MapServerEndpoints();
