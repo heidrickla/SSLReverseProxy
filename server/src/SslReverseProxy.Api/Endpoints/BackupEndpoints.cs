@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SslReverseProxy.Api.Auth;
@@ -19,7 +20,8 @@ public static class BackupEndpoints
     public static IEndpointRouteBuilder MapBackupEndpoints(this IEndpointRouteBuilder app)
     {
         var backup = app.MapGroup("/api/backup").WithTags("Backup")
-            .RequireAuthorization(AuthorizationSetup.PolicyName(Permission.BackupManage));
+            .RequireAuthorization(AuthorizationSetup.PolicyName(Permission.BackupManage))
+            .WithMetadata(new RequestSizeLimitAttribute(BackupFormat.MaxBytes)); // the request gate reads a body before authentication
 
         backup.MapGet("/", async (AppDbContext db, TimeProvider clock, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
         {

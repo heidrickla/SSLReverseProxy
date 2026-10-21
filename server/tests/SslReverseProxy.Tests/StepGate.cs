@@ -16,6 +16,9 @@ internal sealed class StepGate : IDbCommandInterceptor, IDbTransactionIntercepto
 
     public Task Reached => _reached.Task;
 
+    /// <summary>Holds through cancellation, as work that does not watch its token would.</summary>
+    public bool IgnoresCancellation { get; init; }
+
     public static bool UserReadById(string sql) =>
         sql.Contains("FROM \"Users\" AS \"u\"") && sql.Contains("WHERE \"u\".\"Id\" =");
 
@@ -57,10 +60,10 @@ internal sealed class StepGate : IDbCommandInterceptor, IDbTransactionIntercepto
         if (_match(sql) && Interlocked.Decrement(ref _left) == 0) await Hold(ct);
     }
 
-    // The hold ends at Release, after 30 s, or when the request's work is cancelled.
+    // The hold ends at Release, after 30 s, or when the request's work is cancelled unless it ignores cancellation.
     private async Task Hold(CancellationToken ct)
     {
         _reached.TrySetResult();
-        await _release.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+        await _release.Task.WaitAsync(TimeSpan.FromSeconds(30), IgnoresCancellation ? CancellationToken.None : ct);
     }
 }

@@ -21,6 +21,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 var securityOptions = builder.Configuration.GetSection(SecurityOptions.SectionName).Get<SecurityOptions>()
     ?? new SecurityOptions();
+if (securityOptions.StateChangeSeconds is < 1 or > SecurityOptions.MaxStateChangeSeconds)
+    throw new InvalidOperationException(
+        $"Security:StateChangeSeconds is {securityOptions.StateChangeSeconds}; it must be from 1 to {SecurityOptions.MaxStateChangeSeconds}.");
 builder.Services.AddSingleton(securityOptions);
 
 var passkeyOptions = builder.Configuration.GetSection(PasskeyOptions.SectionName).Get<PasskeyOptions>()

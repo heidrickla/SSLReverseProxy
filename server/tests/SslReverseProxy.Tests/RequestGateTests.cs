@@ -255,6 +255,69 @@ public class RequestGateTests
     }
 
     [Fact]
+    public async Task AChangeStuckPastTheDeadline_LosesTheGateThen_AndChangesNothingAfter()
+    {
+        var step = new StepGate { IgnoresCancellation = true };
+        using var f = new PasskeyFactory(interceptor: step,
+            settings: new Dictionary<string, string?> { ["Security:StateChangeSeconds"] = "1" });
+        var (admin, _) = f.WithKey();
+        var owner = NewUser(f, Role.Admin);
+
+        step.HoldUserRead(1); // the create's read of the owner, held through the deadline
+        var create = admin.PostAsJsonAsync("/api/apikeys", new { userId = owner, name = "stuck", lifetimeDays = 30 });
+        await step.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+        var next = admin.PostAsJsonAsync("/api/users", new { name = "", email = "" });
+        Assert.True(await FinishesWithin(next, TimeSpan.FromSeconds(10)), "the gate stayed with a change stuck past its deadline");
+        Assert.Equal(HttpStatusCode.BadRequest, (await next).StatusCode);
+        Assert.False(create.IsCompleted);
+
+        step.Release();
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await create).StatusCode);
+        Assert.Equal(0, f.Db(db => db.ApiKeys.Count(k => k.UserId == owner)));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("86401")]
+    [InlineData("2147483647")]
+    public void ADeadlineOutOfRange_StopsStartup(string seconds)
+    {
+        using var f = new PasskeyFactory(settings: new Dictionary<string, string?> { ["Security:StateChangeSeconds"] = seconds });
+        var e = Assert.ThrowsAny<Exception>(() => f.CreateClient());
+        Assert.Contains("Security:StateChangeSeconds", RequestWriteGuardTests.Messages(e));
+    }
+
+    [Fact]
+    public async Task AnOversizedBody_IsRefusedBeforeAuthentication()
+    {
+        using var f = new PasskeyFactory();
+        var anonymous = f.Anonymous();
+        var big = new byte[RequestGate.DefaultBodyLimit + 1];
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge,
+            (await anonymous.PostAsync("/api/servers", new ByteArrayContent(big))).StatusCode);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge,
+            (await anonymous.PostAsync("/api/servers", new Unsized(big))).StatusCode);
+
+        // The backup import declares a larger limit.
+        var (admin, _) = f.WithKey();
+        var backup = Encoding.UTF8.GetBytes(new string(' ', 3 * 512 * 1024) + "{}");
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await admin.PostAsync("/api/backup/import/dry-run", new Unsized(backup))).StatusCode);
+    }
+
+    // A body sent without a Content-Length.
+    private sealed class Unsized(byte[] body) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(body).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    [Fact]
     public async Task TheAppRefusesAWriteFromARequestOutsideTheGate()
     {
         using var f = new PasskeyFactory();
@@ -342,6 +405,12 @@ public class RequestWriteGuardTests : IDisposable
     }
 
     private static DefaultHttpContext Request(string method) => new() { Request = { Method = method, Path = "/api/x" } };
+
+    private static DefaultHttpContext WithProblems(DefaultHttpContext ctx)
+    {
+        ctx.RequestServices = new ServiceCollection().AddLogging().AddProblemDetails().BuildServiceProvider();
+        return ctx;
+    }
 
     private static RequestGateMiddleware Gated(RequestDelegate next, RequestGate gate, int seconds = 120) =>
         new(next, gate, new SecurityOptions { StateChangeSeconds = seconds });
@@ -444,6 +513,109 @@ public class RequestWriteGuardTests : IDisposable
         Assert.False(stalled.Response.Headers.ContainsKey("X-Endpoint"));
         Assert.DoesNotContain("partial", Encoding.UTF8.GetString(body.ToArray()));
         Assert.True(await FinishesWithin(Gated(_ => Task.CompletedTask, gate).InvokeAsync(Request("POST")), TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task WorkStuckPastTheDeadline_LosesTheGateThen_AndItsLaterWriteIsRefused()
+    {
+        var gate = new RequestGate();
+        var stuck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ctx = WithProblems(Request("POST"));
+        _accessor.HttpContext = ctx;
+        var run = Gated(async _ =>
+        {
+            await AddUser();
+            reached.TrySetResult();
+            await stuck.Task; // does not watch the deadline
+            await using var db = new AppDbContext(_options);
+            await db.Database.ExecuteSqlRawAsync("DELETE FROM \"Users\"");
+        }, gate, seconds: 1).InvokeAsync(ctx);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(await FinishesWithin(Gated(_ => Task.CompletedTask, gate).InvokeAsync(Request("POST")), TimeSpan.FromSeconds(10)),
+            "the gate stayed with work stuck past its deadline");
+        stuck.TrySetResult();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, ctx.Response.StatusCode);
+        _accessor.HttpContext = null;
+        Assert.Equal(1, await Users());
+    }
+
+    [Fact]
+    public async Task ACommitAfterTheTurnEnds_IsRefused()
+    {
+        var gate = new RequestGate();
+        var stuck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ctx = WithProblems(Request("POST"));
+        _accessor.HttpContext = ctx;
+        var run = Gated(async _ =>
+        {
+            await using var db = new AppDbContext(_options);
+            await using var tx = await db.Database.BeginTransactionAsync();
+            db.Users.Add(new User { Name = "u", Email = $"{Guid.NewGuid():N}@example.com", Role = Role.Viewer });
+            await db.SaveChangesAsync();
+            reached.TrySetResult();
+            await stuck.Task; // does not watch the deadline
+            await tx.CommitAsync();
+        }, gate, seconds: 1).InvokeAsync(ctx);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(await FinishesWithin(Gated(_ => Task.CompletedTask, gate).InvokeAsync(Request("POST")), TimeSpan.FromSeconds(10)),
+            "the gate stayed with work stuck past its deadline");
+        stuck.TrySetResult();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, ctx.Response.StatusCode);
+        _accessor.HttpContext = null;
+        Assert.Equal(0, await Users());
+    }
+
+    [Fact]
+    public async Task AWriteUnderWayAtTheDeadline_KeepsTheGateUntilItFinishes()
+    {
+        var step = new StepGate { IgnoresCancellation = true };
+        step.HoldCommand(sql => sql.Contains("INSERT INTO \"Users\""));
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(_conn)
+            .AddInterceptors(new RequestWriteGuard(_accessor), step).Options;
+        var gate = new RequestGate();
+        var ctx = WithProblems(Request("POST"));
+        _accessor.HttpContext = ctx;
+        var run = Gated(async _ =>
+        {
+            await using var db = new AppDbContext(options);
+            db.Users.Add(new User { Name = "u", Email = $"{Guid.NewGuid():N}@example.com", Role = Role.Viewer });
+            await db.SaveChangesAsync();
+        }, gate, seconds: 1).InvokeAsync(ctx);
+        await step.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var next = Gated(_ => Task.CompletedTask, gate).InvokeAsync(Request("POST"));
+        Assert.False(await FinishesWithin(next, TimeSpan.FromSeconds(3)), "the gate was released while a write was under way");
+        step.Release();
+        Assert.True(await FinishesWithin(next, TimeSpan.FromSeconds(10)), "the gate stayed after the write finished");
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, ctx.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AnOversizedBody_IsRefusedWithoutBeingRead()
+    {
+        var upload = new HeldStream();
+        var ctx = WithProblems(Request("POST"));
+        ctx.Request.Body = upload;
+        ctx.Request.ContentLength = RequestGate.DefaultBodyLimit + 1;
+        var ran = false;
+        var run = Gated(_ => { ran = true; return Task.CompletedTask; }, new RequestGate()).InvokeAsync(ctx);
+        try
+        {
+            Assert.True(await FinishesWithin(run, TimeSpan.FromSeconds(10)), "the body was read before its size was checked");
+            Assert.Equal(StatusCodes.Status413PayloadTooLarge, ctx.Response.StatusCode);
+            Assert.False(ran);
+        }
+        finally
+        {
+            upload.Release();
+        }
     }
 
     [Fact]
