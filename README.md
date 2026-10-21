@@ -1,12 +1,12 @@
 # SSLReverseProxy
 
-A control plane for a [Caddy](https://caddyserver.com) reverse proxy: a React admin dashboard over an ASP.NET Core (.NET 10) service that starts, stops and configures the proxy, its servers, host and path routes, and ACME certificates. It reads the certificate Caddy serves for each name, forces renewals, obtains wildcards over Cloudflare DNS-01 with a server-held token, and sends server and certificate alerts to a webhook (such as Home Assistant's) or ntfy. The API authenticates with passkeys (cookie sessions with CSRF tokens), hashed API keys or mutual TLS, enforces deny-by-default role-based access on every action, re-validates every upstream server-side against SSRF, supports per-route IP allow and deny lists, and keeps an append-only audit trail with config snapshots and one-call rollback.
+A control plane for a [Caddy](https://caddyserver.com) reverse proxy: a React admin dashboard over an ASP.NET Core (.NET 10) service that starts, stops and configures the proxy, its servers, host and path routes, and ACME certificates. It reads the certificate Caddy serves for each name, forces renewals, obtains wildcards over Cloudflare DNS-01 with a server-held token, and sends server and certificate alerts to a webhook (such as Home Assistant's) or ntfy. The API authenticates with passkeys (cookie sessions with CSRF tokens), hashed API keys scoped to chosen permissions and expiring within a year, or mutual TLS, enforces deny-by-default role-based access on every action, re-validates every upstream server-side against SSRF, supports per-route IP allow and deny lists, and keeps an append-only audit trail with config snapshots and one-call rollback.
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
-| `/` (React, TypeScript, Vite) | Admin UI: dashboard, servers, proxy rules, SSL certificates, users, audit log. Talks to the API through [`services/apiClient.ts`](services/apiClient.ts). |
+| `/` (React, TypeScript, Vite) | Admin UI: dashboard, servers, proxy rules, SSL certificates, users, API keys, audit log. Talks to the API through [`services/apiClient.ts`](services/apiClient.ts). |
 | [`server/`](server/README.md) (ASP.NET Core, .NET 10) | Control plane: authentication, authorization, secret custody, proxy lifecycle. Endpoint and configuration reference in its README. |
 | [SECURITY.md](SECURITY.md) | Security model and trust boundaries. |
 

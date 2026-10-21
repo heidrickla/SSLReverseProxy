@@ -47,6 +47,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentPrincipal, CurrentPrincipal>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
+builder.Services.AddSingleton<IAuthorizationHandler, UnscopedAuthorizationHandler>();
 
 builder.Services.AddSingleton<PasskeyChallenges>();
 builder.Services.AddSingleton<IFido2>(_ => new Fido2(new Fido2Configuration
@@ -66,6 +67,8 @@ builder.Services.AddHostedService<TrafficSampler>();
 builder.Services.AddSingleton<CertificateMonitor>();
 builder.Services.AddSingleton<ICertificateChecks>(sp => sp.GetRequiredService<CertificateMonitor>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<CertificateMonitor>());
+builder.Services.AddSingleton<ApiKeyExpiryMonitor>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiKeyExpiryMonitor>());
 
 builder.Services.AddAuthentication(ApiKeyDefaults.Scheme)
     .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(ApiKeyDefaults.Scheme, _ => { });
@@ -73,6 +76,7 @@ builder.Services.AddAuthentication(ApiKeyDefaults.Scheme)
 builder.Services.AddAuthorization(options =>
 {
     options.AddPermissionPolicies();
+    options.AddUnscopedPolicy();
     // Deny by default: everything requires an authenticated principal unless it
     // explicitly opts out with AllowAnonymous.
     options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();

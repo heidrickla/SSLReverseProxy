@@ -38,7 +38,8 @@ public static class DbBootstrapper
         await db.SaveChangesAsync(ct);
 
         var apiKeys = scope.ServiceProvider.GetRequiredService<IApiKeyService>();
-        var issued = await apiKeys.CreateAsync(admin.Id, "bootstrap", lifetime: null, ct);
+        // The operator's way in: it follows the admin's role and does not expire.
+        var issued = await apiKeys.CreateAsync(admin.Id, "bootstrap", expiresAt: null, scopes: null, ct);
 
         // Offered in memory so a local dev UI can claim it via /api/bootstrap-key.
         scope.ServiceProvider.GetRequiredService<BootstrapKeyBroker>().Offer(issued.PlaintextToken);

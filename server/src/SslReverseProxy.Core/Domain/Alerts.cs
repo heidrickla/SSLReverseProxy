@@ -8,12 +8,13 @@ public static class AlertTypes
     public const string CertificateExpiring = "certificate.expiring";
     public const string CertificateExpired = "certificate.expired";
     public const string CertificateFailed = "certificate.failed";
+    public const string ApiKeyExpiring = "api_key.expiring";
 
     /// <summary>Sent only to the target a test names, whatever its event list.</summary>
     public const string Test = "test";
 
     public static readonly IReadOnlyList<string> Subscribable =
-        [ServerDown, ServerUp, CertificateExpiring, CertificateExpired, CertificateFailed];
+        [ServerDown, ServerUp, CertificateExpiring, CertificateExpired, CertificateFailed, ApiKeyExpiring];
 }
 
 public enum AlertSeverity
@@ -68,5 +69,29 @@ public static class CertificateAlerts
                 $"Certificate failed: {cert.Domain}",
                 $"No certificate is served for {cert.Domain}.{error}", now),
         };
+    }
+}
+
+/// <summary>
+/// The warning an API key's expiry calls for: once when 7 days or fewer remain and once when 1 day or fewer
+/// remain. Revoked, expired and non-expiring keys raise none. The message names the key, never its token.
+/// </summary>
+public static class ApiKeyAlerts
+{
+    public static readonly IReadOnlyList<int> ThresholdDays = [7, 1];
+
+    public static Alert? Evaluate(ApiKey key, string ownerName, DateTimeOffset now)
+    {
+        if (key.RevokedAt is not null || key.ExpiresAt is not { } expires || expires <= now) return null;
+        var left = expires - now;
+        var threshold = ThresholdDays.Where(d => left <= TimeSpan.FromDays(d)).Order().FirstOrDefault();
+        if (threshold == 0 || key.ExpiryAlertedDays <= threshold) return null;
+        key.ExpiryAlertedDays = threshold;
+        var when = expires.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'");
+        var hours = (int)Math.Ceiling(left.TotalHours);
+        var remaining = hours <= 48 ? $"{hours} hours" : $"{(int)Math.Ceiling(left.TotalDays)} days";
+        return new Alert(AlertTypes.ApiKeyExpiring, threshold == 1 ? AlertSeverity.Critical : AlertSeverity.Warning,
+            key.Name, $"API key expiring: {key.Name}",
+            $"API key {key.Name} ({key.Prefix}) of {ownerName} expires {when}, {remaining} from now. Rotate it to keep access.", now);
     }
 }

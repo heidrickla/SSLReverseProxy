@@ -121,7 +121,8 @@ const SSL: React.FC = () => {
     const [renewing, setRenewing] = useState<Certificate | null>(null);
     const [error, setError] = useState<string | null>(null);
     const scrollRef = useHorizontalScroll();
-    const canWrite = hasPermission('cert:create');
+    const canWrite = hasPermission('CertWrite');
+    const mayRenew = hasPermission('CertRenew');
 
     const expiringCerts = useMemo(
         () => certificates.filter(cert => cert.status === 'expiring' || cert.status === 'expired'),
@@ -141,7 +142,7 @@ const SSL: React.FC = () => {
         }
     };
 
-    const renewButton = (cert: Certificate) => canWrite && (
+    const renewButton = (cert: Certificate) => mayRenew && (
         <Button size="sm" variant="secondary" disabled={!canRenew(cert)}
             onClick={(e) => { e.stopPropagation(); setRenewing(cert); }}>
             {cert.renewPending ? 'Renewing' : 'Renew'}

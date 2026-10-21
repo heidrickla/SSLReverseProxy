@@ -32,6 +32,7 @@ public class AppDbContext : DbContext
             e.HasIndex(k => k.Prefix).IsUnique();
             e.Property(k => k.Prefix).HasMaxLength(32).IsRequired();
             e.Property(k => k.Name).HasMaxLength(200).IsRequired();
+            e.Property(k => k.Scopes).HasMaxLength(1024);
             e.HasOne(k => k.User).WithMany(u => u.ApiKeys)
                 .HasForeignKey(k => k.UserId).OnDelete(DeleteBehavior.Cascade);
         });

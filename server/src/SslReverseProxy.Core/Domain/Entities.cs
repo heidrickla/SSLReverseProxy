@@ -76,6 +76,15 @@ public class ApiKey
     public DateTimeOffset? RevokedAt { get; set; }
     public DateTimeOffset? LastUsedAt { get; set; }
 
+    /// <summary>
+    /// Comma-separated permission names the key is limited to, within its owner's current role. Null means
+    /// everything the role allows. Fixed at issue; rotation issues a new key.
+    /// </summary>
+    public string? Scopes { get; set; }
+
+    /// <summary>The smallest expiry warning already sent, in days before expiry.</summary>
+    public int? ExpiryAlertedDays { get; set; }
+
     public bool IsActive(DateTimeOffset now) =>
         RevokedAt is null && (ExpiresAt is null || ExpiresAt > now);
 }

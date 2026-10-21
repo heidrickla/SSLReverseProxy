@@ -13,7 +13,8 @@ const stateColor: Record<string, string> = {
 
 const ProxyControl: React.FC = () => {
     const { hasPermission } = useAuth();
-    const canControl = hasPermission('proxy:control');
+    const canControl = hasPermission('ProxyControl');
+    const canReload = hasPermission('ProxyReload');
 
     const [status, setStatus] = useState<ProxyStatus | null>(null);
     const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -80,14 +81,20 @@ const ProxyControl: React.FC = () => {
                     </div>
                 ) : <p className="text-on-surface-muted text-sm">Loading…</p>}
 
-                {canControl && (
+                {(canControl || canReload) && (
                     <div className="flex flex-wrap gap-2 mt-6 pt-4 border-t border-border">
-                        <Button onClick={() => run('Start', api.proxy.start)} disabled={busy !== null}>
-                            {busy === 'Start' ? 'Starting…' : 'Start'}
-                        </Button>
-                        <Button variant="secondary" onClick={() => run('Reload', api.proxy.reload)} disabled={busy !== null}>Reload</Button>
-                        <Button variant="secondary" onClick={() => run('Validate', api.proxy.validate)} disabled={busy !== null}>Validate</Button>
-                        <Button variant="danger" onClick={() => run('Stop', api.proxy.stop)} disabled={busy !== null}>Stop</Button>
+                        {canControl && (
+                            <Button onClick={() => run('Start', api.proxy.start)} disabled={busy !== null}>
+                                {busy === 'Start' ? 'Starting…' : 'Start'}
+                            </Button>
+                        )}
+                        {canReload && (
+                            <>
+                                <Button variant="secondary" onClick={() => run('Reload', api.proxy.reload)} disabled={busy !== null}>Reload</Button>
+                                <Button variant="secondary" onClick={() => run('Validate', api.proxy.validate)} disabled={busy !== null}>Validate</Button>
+                            </>
+                        )}
+                        {canControl && <Button variant="danger" onClick={() => run('Stop', api.proxy.stop)} disabled={busy !== null}>Stop</Button>}
                     </div>
                 )}
             </div>

@@ -18,10 +18,34 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
     protected override Task HandleRequirementAsync(
         AuthorizationHandlerContext context, PermissionRequirement requirement)
     {
-        var roleClaim = context.User.FindFirstValue(ClaimTypes.Role);
-        if (Enum.TryParse<Role>(roleClaim, out var role) && Permissions.Has(role, requirement.Permission))
+        if (PrincipalPermissions.Of(context.User).Contains(requirement.Permission))
             context.Succeed(requirement);
         return Task.CompletedTask;
+    }
+}
+
+/// <summary>Refuses a principal signed in with a key limited to scopes; used where a key could widen itself.</summary>
+public sealed class UnscopedRequirement : IAuthorizationRequirement { }
+
+public sealed class UnscopedAuthorizationHandler : AuthorizationHandler<UnscopedRequirement>
+{
+    protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, UnscopedRequirement requirement)
+    {
+        if (context.User.FindFirst(ApiKeyDefaults.ScopesClaim) is null) context.Succeed(requirement);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>The one place a principal's permissions are worked out from its claims.</summary>
+public static class PrincipalPermissions
+{
+    public static IReadOnlySet<Permission> Of(ClaimsPrincipal? user)
+    {
+        if (user?.Identity?.IsAuthenticated != true
+            || !Enum.TryParse<Role>(user.FindFirstValue(ClaimTypes.Role), out var role) || !Enum.IsDefined(role))
+            return new HashSet<Permission>();
+        var scopes = user.FindFirst(ApiKeyDefaults.ScopesClaim) is { } claim ? ApiKeyScopes.Parse(claim.Value) : null;
+        return Permissions.Effective(role, scopes);
     }
 }
 
@@ -42,6 +66,19 @@ public static class AuthorizationSetup
     }
 
     public static string PolicyName(Permission permission) => $"perm:{permission}";
+
+    /// <summary>Signed in with a session or with a key that follows its owner's role, never a scoped key.</summary>
+    public const string Unscoped = "unscoped";
+
+    public static AuthorizationOptions AddUnscopedPolicy(this AuthorizationOptions options)
+    {
+        options.AddPolicy(Unscoped, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.Requirements.Add(new UnscopedRequirement());
+        });
+        return options;
+    }
 }
 
 /// <summary>Reads the authenticated principal off the current HttpContext.</summary>
@@ -61,5 +98,12 @@ public sealed class CurrentPrincipal : ICurrentPrincipal
     public Role Role =>
         Enum.TryParse<Role>(_user?.FindFirstValue(ClaimTypes.Role), out var r) ? r : Role.Viewer;
 
-    public bool Has(Permission permission) => IsAuthenticated && Permissions.Has(Role, permission);
+    public Guid? ApiKeyId =>
+        Guid.TryParse(_user?.FindFirstValue(ApiKeyDefaults.KeyClaim), out var id) ? id : null;
+
+    public bool IsScopedKey => _user?.FindFirst(ApiKeyDefaults.ScopesClaim) is not null;
+
+    public IReadOnlySet<Permission> Permissions => PrincipalPermissions.Of(_user);
+
+    public bool Has(Permission permission) => Permissions.Contains(permission);
 }

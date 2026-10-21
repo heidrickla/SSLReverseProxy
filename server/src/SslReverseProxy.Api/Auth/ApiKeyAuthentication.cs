@@ -16,6 +16,12 @@ public static class ApiKeyDefaults
 
     /// <summary>Set on principals signed in with a session cookie; its value is the session id.</summary>
     public const string SessionClaim = "sslrp:session";
+
+    /// <summary>Set on principals signed in with an API key; its value is the key id.</summary>
+    public const string KeyClaim = "sslrp:key";
+
+    /// <summary>Set when the key is limited to scopes; its value is the stored list, possibly empty.</summary>
+    public const string ScopesClaim = "sslrp:scopes";
 }
 
 public sealed class ApiKeyAuthenticationOptions : AuthenticationSchemeOptions { }
@@ -24,7 +30,7 @@ public sealed class ApiKeyAuthenticationOptions : AuthenticationSchemeOptions { 
 /// Authenticates a request by an API key (<c>X-Api-Key</c> or <c>Authorization: Bearer</c>) or by a passkey
 /// session cookie, never both. A session is checked against the database on every request: unexpired, not
 /// revoked, the user active and in the role the session started with. Claims carry the user id, name and
-/// role. No token is logged.
+/// current role, and for a key its id and any scopes. No token is logged.
 /// </summary>
 public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthenticationOptions>
 {
@@ -66,10 +72,10 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAu
         if (string.IsNullOrEmpty(token))
             return AuthenticateResult.NoResult(); // let the challenge produce 401
 
-        var user = await _apiKeys.AuthenticateAsync(token, Context.RequestAborted);
-        if (user is null)
+        var key = await _apiKeys.AuthenticateAsync(token, Context.RequestAborted);
+        if (key?.User is not { } user)
             return AuthenticateResult.Fail("Invalid API key.");
-        return Success(user, null);
+        return Success(user, null, key);
     }
 
     private async Task<AuthenticateResult> AuthenticateSessionAsync(string cookie)
@@ -103,7 +109,7 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAu
         return AuthenticateResult.Fail("Session is not valid.");
     }
 
-    private AuthenticateResult Success(User user, Guid? sessionId)
+    private AuthenticateResult Success(User user, Guid? sessionId, ApiKey? key = null)
     {
         var claims = new List<Claim>
         {
@@ -112,6 +118,11 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAu
             new(ClaimTypes.Role, user.Role.ToString()),
         };
         if (sessionId is { } sid) claims.Add(new Claim(ApiKeyDefaults.SessionClaim, sid.ToString()));
+        if (key is not null)
+        {
+            claims.Add(new Claim(ApiKeyDefaults.KeyClaim, key.Id.ToString()));
+            if (key.Scopes is { } scopes) claims.Add(new Claim(ApiKeyDefaults.ScopesClaim, scopes));
+        }
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, ApiKeyDefaults.Scheme));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, ApiKeyDefaults.Scheme));
     }

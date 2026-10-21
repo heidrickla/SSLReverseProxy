@@ -54,14 +54,14 @@ public static class ProxyEndpoints
             {
                 return Results.Problem(title: "Config cannot be built", detail: ex.Message, statusCode: StatusCodes.Status409Conflict);
             }
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
+        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyReload));
 
         // Dry-run: validate the current rule set without touching the live proxy.
         group.MapPost("/validate", async (IProxyController proxy, AppDbContext db, CancellationToken ct) =>
         {
             var r = await proxy.ValidateConfigurationAsync(await db.LoadProxyPlanAsync(ct), ct);
             return Results.Ok(new ProxyValidationDto(r.Valid, r.Issues, r.EngineValidated));
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
+        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyReload));
 
         group.MapPost("/start", async (
             IProxyController proxy, ProxyChanges changes, AppDbContext db, IAuditLog audit, IEventStream events,
@@ -109,7 +109,7 @@ public static class ProxyEndpoints
                 success: status.State is ProxyState.Running, details: status.Message);
             events.Publish(new ProxyEvent("proxy.reload", $"rules={status.ActiveRuleCount}", DateTimeOffset.UtcNow, me.Name));
             return Results.Ok(ToDto(status));
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
+        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyReload));
 
         // Snapshots + rollback.
         group.MapGet("/snapshots", async (AppDbContext db, CancellationToken ct) =>

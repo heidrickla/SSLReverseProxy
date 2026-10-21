@@ -9,6 +9,7 @@ import ProxyControl from './views/ProxyControl';
 import Servers from './views/Servers';
 import SSL from './views/SSL';
 import Users from './views/Users';
+import ApiKeys from './views/ApiKeys';
 import Settings from './views/Settings';
 import LoginView from './components/Auth';
 // Imported here, not from index.css, so Vite bundles the font files.
@@ -48,6 +49,8 @@ const AppContent: React.FC = () => {
         return <SSL />;
       case 'users':
         return <Users />;
+      case 'api-keys':
+        return <ApiKeys />;
       case 'audit-log':
         return <AuditLog />;
       case 'settings':

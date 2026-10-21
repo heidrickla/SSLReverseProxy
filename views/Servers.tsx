@@ -91,7 +91,7 @@ const Servers: React.FC = () => {
     const { servers, addServer, updateServer, deleteServer, hasPermission } = useAuth();
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const scrollRef = useHorizontalScroll();
-    const canCreate = hasPermission('server:create');
+    const canCreate = hasPermission('ServerWrite');
     
     // State to track the ID of the server the user wants to see.
     // Initialized to null so no server is selected by default.

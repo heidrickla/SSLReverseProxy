@@ -1,4 +1,5 @@
 using SslReverseProxy.Core.Domain;
+using SslReverseProxy.Core.Security;
 
 namespace SslReverseProxy.Api.Contracts;
 
@@ -58,7 +59,10 @@ public sealed record UpdateRuleRequest(string Domain, string UpstreamUrl, bool E
 public sealed record ToggleRuleRequest(bool Enabled);
 public sealed record CreateUserRequest(string Name, string Email, Role Role);
 public sealed record UpdateUserRequest(string Name, Role Role, bool IsActive);
-public sealed record CreateApiKeyRequest(Guid UserId, string Name, int? LifetimeDays);
+/// <summary>One of LifetimeDays (1 to 365) or ExpiresAt (at most 365 days ahead). Null Scopes follow the owner's role.</summary>
+public sealed record CreateApiKeyRequest(Guid UserId, string Name, int? LifetimeDays, DateTimeOffset? ExpiresAt = null, string[]? Scopes = null);
+/// <summary>A body chooses the new key's lifetime and scopes as on create; no body keeps the old key's.</summary>
+public sealed record RotateApiKeyRequest(int? LifetimeDays, DateTimeOffset? ExpiresAt = null, string[]? Scopes = null);
 public sealed record RollbackRequest(long SnapshotId);
 
 // Responses
@@ -130,10 +134,19 @@ public sealed record SessionDto(string CsrfToken, DateTimeOffset ExpiresAt);
 public sealed record PasskeyDto(Guid Id, string Name, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt, bool BackedUp);
 public sealed record AlertDeliveryDto(string Target, bool Delivered, int? Status, string? Error, int Attempts);
 public sealed record UserDto(Guid Id, string Name, string Email, string Role, bool IsActive, DateTimeOffset? LastSeenAt);
-public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt);
-public sealed record IssuedApiKeyDto(Guid Id, string Name, string Token, DateTimeOffset? ExpiresAt);
+/// <summary>Null Scopes: the key follows its owner's role.</summary>
+public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, Guid UserId, string UserName, DateTimeOffset CreatedAt,
+    DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, string[]? Scopes);
+public sealed record IssuedApiKeyDto(Guid Id, string Name, string Token, DateTimeOffset? ExpiresAt, string[]? Scopes);
+public sealed record ApiKeyPresetDto(string Id, string Name, string Description, string[]? Scopes);
+/// <summary>What the key form offers: lifetimes in days, presets, every permission, and each role's permissions.</summary>
+public sealed record ApiKeyOptionsDto(int[] LifetimeDays, int DefaultLifetimeDays, int MaxLifetimeDays,
+    ApiKeyPresetDto[] Presets, string[] Permissions, Dictionary<string, string[]> Roles);
+/// <summary>The key a request signed in with.</summary>
+public sealed record WhoAmIKeyDto(Guid Id, string Name, DateTimeOffset? ExpiresAt, string[]? Scopes);
 public sealed record AuditDto(long Id, DateTimeOffset Timestamp, string Actor, string Action, string TargetType, string TargetName, bool Success, string? SourceIp);
-public sealed record WhoAmIDto(Guid? UserId, string Name, string Role, string[] Permissions);
+/// <summary>Permissions are the effective ones: the role's, narrowed to the key's scopes.</summary>
+public sealed record WhoAmIDto(Guid? UserId, string Name, string Role, string[] Permissions, WhoAmIKeyDto? Key = null);
 public sealed record ProxyStatusDto(string State, string Engine, int? ProcessId, DateTimeOffset? StartedAt, int ActiveRuleCount, string? Message);
 
 public static class DtoMappings
@@ -178,6 +191,14 @@ public static class DtoMappings
             c.LastError, c.CheckedAt, c.RenewFromSerial is not null, c.Managed);
     }
     public static UserDto ToDto(this User u) => new(u.Id, u.Name, u.Email, u.Role.ToString(), u.IsActive, u.LastSeenAt);
-    public static ApiKeyDto ToDto(this ApiKey k) => new(k.Id, k.Name, k.Prefix, k.CreatedAt, k.ExpiresAt, k.RevokedAt);
+    public static ApiKeyDto ToDto(this ApiKey k) => new(k.Id, k.Name, k.Prefix, k.UserId, k.User?.Name ?? "",
+        k.CreatedAt, k.ExpiresAt, k.RevokedAt, k.LastUsedAt, ScopeNames(k.Scopes));
+
+    /// <summary>A key's stored scopes as names in permission order, or null when it follows its owner's role.</summary>
+    public static string[]? ScopeNames(string? stored) =>
+        ApiKeyScopes.Parse(stored)?.Order().Select(p => p.ToString()).ToArray();
+
+    public static string[] Names(IEnumerable<Permission> permissions) =>
+        permissions.Order().Select(p => p.ToString()).ToArray();
     public static AuditDto ToDto(this AuditEntry a) => new(a.Id, a.Timestamp, a.ActorName, a.Action, a.TargetType, a.TargetName, a.Success, a.SourceIp);
 }

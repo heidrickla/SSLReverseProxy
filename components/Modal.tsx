@@ -6,9 +6,10 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  wide?: boolean;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, wide = false }) => {
   if (!isOpen) return null;
 
   return (
@@ -20,7 +21,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="card shadow-2xl shadow-black/40 w-full max-w-md m-4 relative animate-fade-in"
+        className={`card shadow-2xl shadow-black/40 w-full ${wide ? 'max-w-2xl max-h-[90vh] overflow-y-auto' : 'max-w-md'} m-4 relative animate-fade-in`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center px-6 pt-5 pb-4 border-b border-border">

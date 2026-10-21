@@ -19,8 +19,8 @@ interface ServerDetailPaneProps {
 
 const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, onUpdateServer, onDeleteServer }) => {
   const { hasPermission } = useAuth();
-  const canManageRules = hasPermission('rule:manage');
-  const canDelete = hasPermission('server:delete');
+  const canManageRules = hasPermission('RuleWrite');
+  const canDelete = hasPermission('ServerWrite');
   const rulesScrollRef = useHorizontalScroll();
   const [modalState, setModalState] = useState<{
     isOpen: boolean;

@@ -24,7 +24,7 @@ Caddy's config is built from the rules, certificate rows and renewal marks. `Pro
 | Authentication | API key in `X-Api-Key` or `Authorization: Bearer`, or a passkey session. Optional mutual TLS pinned to allow-listed client-certificate thumbprints. A request carrying both an API key and a session cookie is refused. |
 | Passkey sessions | WebAuthn ([fido2-net-lib](https://github.com/passwordless-lib/fido2-net-lib)) with discoverable credentials and user verification required. Sign-in sets an HttpOnly, Secure, SameSite=Strict `__Host-sslrp-session` cookie; the database holds the secret's SHA-256 only. Every request rechecks the session: unexpired, not revoked, the user active and in the role the session started with. Sign-out, a role change, deactivation or removing the passkey ends it. Unsafe methods need an `Origin` listed in `Passkeys:Origins` and the session's CSRF token (an HMAC of the secret) in `X-CSRF-Token`. |
 | API-key storage | PBKDF2-SHA256 hash, per-key salt and server pepper only. Plaintext shown once at creation. Constant-time verification. |
-| Authorization | Deny-by-default. Every endpoint requires a permission; roles map to permissions server-side (`Core/Security/Permissions.cs`). |
+| Authorization | Deny-by-default. Every endpoint requires a permission; roles map to permissions server-side (`Core/Security/Permissions.cs`). An API key's scopes narrow its owner's current role, checked on every request. |
 | SSRF | Every upstream is validated server-side (`ProxyTargetValidator`): http(s) only, cloud-metadata and link-local blocked, private and loopback gated by policy. |
 | Transport | HSTS and HTTPS redirect in Production; security headers and a JSON-only CSP on every response. |
 | Abuse | Per-IP fixed-window rate limit, `Security:RequestsPerMinute` (100). Anonymous passkey ceremonies have their own per-IP limits; at most 1000 are pending, each for 2 minutes. |
@@ -111,7 +111,7 @@ Meta
 
 - `GET /api/health`: anonymous liveness. `GET /api/ready`: anonymous readiness (database and proxy).
 - `GET /api/bootstrap-key`: one-time first-run key claim (Development and loopback only; 404 otherwise).
-- `GET /api/whoami`: current principal and permissions.
+- `GET /api/whoami`: current principal and its effective permissions (the role's, narrowed to a key's scopes); `key` holds the signing key's id, name, expiry and scopes.
 - `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes, `certificate.status` when a certificate's does, `certificate.renewed` or `certificate.renew_failed` when a forced renewal ends, and `certificate.renew_cancelled` when a rollback stops one. Headers go out once the subscriber is registered, so no event published after the client has them is missed.
 
 Passkeys
@@ -193,7 +193,7 @@ Each enabled TLS rule's host has a row, which the certificate monitor adds and r
 
 Alerts
 
-The server and certificate monitors raise alerts; each goes to every usable target subscribed to its type. Up to 100 wait for delivery; when the queue is full the oldest is dropped and logged. A send gets three tries at most, 10 s each, 2 s then 10 s apart, retried on network errors, timeouts, 408, 429 and 5xx. Requests do not follow redirects.
+The server, certificate and API key monitors raise alerts; each goes to every usable target subscribed to its type. Up to 100 wait for delivery; when the queue is full the oldest is dropped and logged. A send gets three tries at most, 10 s each, 2 s then 10 s apart, retried on network errors, timeouts, 408, 429 and 5xx. Requests do not follow redirects.
 
 | Type | Severity | Raised when |
 | --- | --- | --- |
@@ -202,8 +202,9 @@ The server and certificate monitors raise alerts; each goes to every usable targ
 | `certificate.expiring` | warning | A fresh reading is `Expiring`; once per expiry date. |
 | `certificate.expired` | critical | A fresh reading is `Expired`; once per expiry date. |
 | `certificate.failed` | warning | A fresh reading is `Failed`; once until the name reads `Valid`. |
+| `api_key.expiring` | warning, critical at 1 day | An unrevoked key has 7 days or fewer left, then 1 day or fewer; once per threshold, checked hourly. Names the key and owner, never the token. |
 
-Server down state is kept in memory, so after a restart a server still down alerts again. Certificate alert state is stored on the row.
+Server down state is kept in memory, so after a restart a server still down alerts again. Certificate and API key alert state is stored on the row.
 
 | Kind | Request |
 | --- | --- |
@@ -235,8 +236,44 @@ Both need `AlertManage` (Admin).
 Users, keys, audit
 
 - `GET/POST/PUT /api/users`: the last active admin cannot be demoted or deactivated.
-- `GET/POST /api/apikeys` (filter by `userId`), `POST /api/apikeys/{id}/{revoke|rotate}`.
+- API keys, below.
 - `GET /api/audit`: filter by `actor`, `action`, `targetType`; cursor paging with `beforeId`.
+
+API keys
+
+Token `srp.<prefix>.<secret>`, sent as `X-Api-Key` or `Authorization: Bearer`. A key lasts 1 to 365 days. Its scopes are permission names held within the owner's current role: demoting the owner narrows the key at once. Null scopes follow the role. Scopes and expiry are fixed at issue. All endpoints need `ApiKeyManage` (Admin).
+
+| Endpoint | |
+| --- | --- |
+| `GET /api/apikeys` | Keys, newest first, with owner, scopes, expiry, last use and revocation. `userId` filters. |
+| `GET /api/apikeys/options` | Lifetime presets in days, the default and maximum, scope presets, every permission, and each role's permissions. |
+| `POST /api/apikeys` | `{userId, name, lifetimeDays \| expiresAt, scopes}` returns the token once. 400 for a lifetime outside 1 to 365 days, an unknown or empty scope list, or a scope the owner's role lacks; 403 for a scope the caller lacks, or null scopes from a scoped key. |
+| `POST /api/apikeys/{id}/rotate` | Issues a new key for the same owner and name and revokes the old one in one transaction. A body chooses lifetime and scopes as on create; no body keeps the old ones (a non-expiring key needs a body). 409 for a revoked key. |
+| `POST /api/apikeys/{id}/revoke` | Ends the key at once. |
+
+| Preset | Scopes |
+| --- | --- |
+| Read only | `ServerRead`, `CertRead` |
+| Home Assistant | `ServerRead`, `CertRead`, `ProxyReload`, `CertRenew` |
+| Rules editor | `ServerRead`, `RuleWrite`, `ProxyReload` |
+| Full access | null: the owner's role |
+
+| Permission | Allows | Roles |
+| --- | --- | --- |
+| `ServerRead` | Servers, rules, status, metrics, traffic, events | Viewer, Editor, Admin |
+| `CertRead` | Certificates and challenges | Viewer, Editor, Admin |
+| `AuditRead` | Audit log | Viewer, Editor, Admin |
+| `ServerWrite` | Add and delete servers | Editor, Admin |
+| `RuleWrite` | Add, change and delete rules | Editor, Admin |
+| `ProxyReload` | Config preview, validate, reload | Editor, Admin |
+| `ProxyControl` | Start, stop, snapshots, rollback | Editor, Admin |
+| `CertRenew` | Force a renewal | Editor, Admin |
+| `CertWrite` | Add, change and delete certificate rows | Editor, Admin |
+| `UserWrite` | Users | Admin |
+| `ApiKeyManage` | API keys | Admin |
+| `AlertManage` | Alert targets and test alerts | Admin |
+
+A scoped key cannot manage passkeys: a passkey signs in with the whole role. The bootstrap key follows the admin role and does not expire.
 
 ## Deployment
 

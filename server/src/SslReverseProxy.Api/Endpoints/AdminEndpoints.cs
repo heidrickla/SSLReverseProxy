@@ -16,17 +16,22 @@ public static class AdminEndpoints
     {
         MapMeta(app);
         MapUsers(app);
-        MapApiKeys(app);
+        ApiKeyEndpoints.MapApiKeys(app);
         MapAudit(app);
         return app;
     }
 
     private static void MapMeta(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/whoami", (ICurrentPrincipal me) =>
-            Results.Ok(new WhoAmIDto(
-                me.UserId, me.Name, me.Role.ToString(),
-                Permissions.For(me.Role).Select(p => p.ToString()).ToArray())))
+        app.MapGet("/api/whoami", async (ICurrentPrincipal me, AppDbContext db, CancellationToken ct) =>
+        {
+            var key = me.ApiKeyId is { } kid
+                ? await db.ApiKeys.AsNoTracking().FirstOrDefaultAsync(k => k.Id == kid, ct)
+                : null;
+            return Results.Ok(new WhoAmIDto(
+                me.UserId, me.Name, me.Role.ToString(), DtoMappings.Names(me.Permissions),
+                key is null ? null : new WhoAmIKeyDto(key.Id, key.Name, key.ExpiresAt, DtoMappings.ScopeNames(key.Scopes))));
+        })
             .RequireAuthorization()
             .WithTags("Meta");
 
@@ -133,57 +138,6 @@ public static class AdminEndpoints
             await audit.AuditAsync(me, ctx, "Update User", "User", user.Email);
             return Results.Ok(user.ToDto());
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.UserWrite));
-
-        return;
-    }
-
-    private static void MapApiKeys(IEndpointRouteBuilder app)
-    {
-        var keys = app.MapGroup("/api/apikeys").WithTags("API Keys");
-
-        keys.MapGet("/", async (AppDbContext db, Guid? userId) =>
-        {
-            var q = db.ApiKeys.AsNoTracking();
-            if (userId is { } uid) q = q.Where(k => k.UserId == uid);
-            return Results.Ok((await q.ToListAsync()).Select(k => k.ToDto()));
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ApiKeyManage));
-
-        keys.MapPost("/", async (
-            CreateApiKeyRequest req, AppDbContext db, IApiKeyService svc,
-            IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
-        {
-            if (!await db.Users.AnyAsync(u => u.Id == req.UserId, ctx.RequestAborted))
-                return Results.NotFound(new { message = "User not found." });
-
-            var lifetime = req.LifetimeDays is > 0 ? TimeSpan.FromDays(req.LifetimeDays.Value) : (TimeSpan?)null;
-            var issued = await svc.CreateAsync(req.UserId, req.Name.Trim(), lifetime, ctx.RequestAborted);
-            await audit.AuditAsync(me, ctx, "Create API Key", "API Key", issued.Record.Name);
-            // The plaintext token is returned here once and never persisted or shown again.
-            return Results.Created($"/api/apikeys/{issued.Record.Id}",
-                new IssuedApiKeyDto(issued.Record.Id, issued.Record.Name, issued.PlaintextToken, issued.Record.ExpiresAt));
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ApiKeyManage));
-
-        keys.MapPost("/{id:guid}/revoke", async (
-            Guid id, IApiKeyService svc, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
-        {
-            await svc.RevokeAsync(id, ctx.RequestAborted);
-            await audit.AuditAsync(me, ctx, "Revoke API Key", "API Key", id.ToString());
-            return Results.NoContent();
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ApiKeyManage));
-
-        // Rotate: issue a fresh key for the same owner/name, then revoke the old one.
-        keys.MapPost("/{id:guid}/rotate", async (
-            Guid id, AppDbContext db, IApiKeyService svc, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>
-        {
-            var old = await db.ApiKeys.AsNoTracking().FirstOrDefaultAsync(k => k.Id == id, ctx.RequestAborted);
-            if (old is null) return Results.NotFound();
-
-            var lifetime = old.ExpiresAt is { } exp ? exp - old.CreatedAt : (TimeSpan?)null;
-            var issued = await svc.CreateAsync(old.UserId, old.Name, lifetime, ctx.RequestAborted);
-            await svc.RevokeAsync(id, ctx.RequestAborted);
-            await audit.AuditAsync(me, ctx, "Rotate API Key", "API Key", old.Name);
-            return Results.Ok(new IssuedApiKeyDto(issued.Record.Id, issued.Record.Name, issued.PlaintextToken, issued.Record.ExpiresAt));
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ApiKeyManage));
 
         return;
     }

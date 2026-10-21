@@ -27,8 +27,9 @@ interface CertificateDetailPaneProps {
 
 const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certificate, onClose, onRenew, onError, onDeleteCertificate }) => {
   const { hasPermission, setCertificateChallenge } = useAuth();
-  const canWrite = hasPermission('cert:create');
-  const canDelete = hasPermission('cert:delete') && certificate.source === 'manual';
+  const canWrite = hasPermission('CertWrite');
+  const canDelete = hasPermission('CertWrite') && certificate.source === 'manual';
+  const mayRenew = hasPermission('CertRenew');
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -94,9 +95,9 @@ const CertificateDetailPane: React.FC<CertificateDetailPaneProps> = ({ certifica
                     <DetailItem label="Last checked" value={certificate.checkedAt ? new Date(certificate.checkedAt).toLocaleString() : '—'} />
                 </div>
 
-                {(canWrite || canDelete) && (
+                {(mayRenew || canDelete) && (
                     <div className="mt-auto pt-6 border-t border-border flex space-x-2 shrink-0">
-                        {canWrite && (
+                        {mayRenew && (
                             <Button variant="secondary" className="w-full" disabled={!canRenew(certificate)} onClick={onRenew}>
                                 {certificate.renewPending ? 'Renewing' : 'Renew'}
                             </Button>

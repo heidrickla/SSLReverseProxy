@@ -37,6 +37,7 @@ export const views = [
   { nav: 'Servers', heading: 'Servers' },
   { nav: 'SSL', heading: 'SSL certificates' },
   { nav: 'Users', heading: 'Users' },
+  { nav: 'API keys', heading: 'API keys' },
   { nav: 'Audit log', heading: 'Audit log' },
   { nav: 'Settings', heading: 'Settings' },
 ] as const;

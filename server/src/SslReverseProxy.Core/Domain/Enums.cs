@@ -11,7 +11,7 @@ public enum Role
 /// <summary>Fine-grained actions guarded by authorization policies.</summary>
 public enum Permission
 {
-    ProxyControl,   // start/stop/reload the proxy
+    ProxyControl,   // start, stop and roll back the proxy
     ServerRead,
     ServerWrite,
     RuleWrite,
@@ -21,6 +21,8 @@ public enum Permission
     ApiKeyManage,
     AuditRead,
     AlertManage,    // list alert targets and send test alerts
+    ProxyReload,    // preview, validate and reload the config built from the rules
+    CertRenew,      // force a certificate renewal
 }
 
 /// <summary>Lifecycle state of the managed reverse-proxy process.</summary>

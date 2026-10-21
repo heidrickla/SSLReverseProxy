@@ -143,7 +143,24 @@ export interface RuleInput {
   /** Omitted or null leaves the rule's routing as it is; sent, both fields are written. */
   routing?: RuleRouting | null;
 }
-export interface WhoAmI { userId: string | null; name: string; role: string; permissions: string[]; }
+/** `permissions` is the effective set: the role's, narrowed to the key's scopes. `key` is set when signed in with a key. */
+export interface WhoAmI {
+  userId: string | null; name: string; role: string; permissions: string[];
+  key?: { id: string; name: string; expiresAt: string | null; scopes: string[] | null } | null;
+}
+/** Null `scopes`: the key follows its owner's role. */
+export interface ApiKey {
+  id: string; name: string; prefix: string; userId: string; userName: string; createdAt: string;
+  expiresAt: string | null; revokedAt: string | null; lastUsedAt: string | null; scopes: string[] | null;
+}
+export interface IssuedApiKey { id: string; name: string; token: string; expiresAt: string | null; scopes: string[] | null; }
+export interface ApiKeyPreset { id: string; name: string; description: string; scopes: string[] | null; }
+export interface ApiKeyOptions {
+  lifetimeDays: number[]; defaultLifetimeDays: number; maxLifetimeDays: number;
+  presets: ApiKeyPreset[]; permissions: string[]; roles: Record<string, string[]>;
+}
+/** One of lifetimeDays or expiresAt. Null scopes follow the owner's role. */
+export interface ApiKeyGrant { lifetimeDays?: number; expiresAt?: string; scopes: string[] | null; }
 /** A WebAuthn ceremony: `options` go to the browser, `handle` comes back with its answer. */
 export interface PasskeyCeremony<T> { handle: string; options: T; }
 export interface PasskeySignIn { csrfToken: string; expiresAt: string; user: WhoAmI; }
@@ -275,6 +292,15 @@ export const api = {
     register: (handle: string, name: string, response: unknown) =>
       request<Passkey>('POST', '/api/passkeys', { handle, name, response }),
     remove: (id: string) => request<void>('DELETE', `/api/passkeys/${id}`),
+  },
+
+  apiKeys: {
+    list: () => request<ApiKey[]>('GET', '/api/apikeys'),
+    options: () => request<ApiKeyOptions>('GET', '/api/apikeys/options'),
+    create: (userId: string, name: string, grant: ApiKeyGrant) =>
+      request<IssuedApiKey>('POST', '/api/apikeys', { userId, name, ...grant }),
+    rotate: (id: string, grant: ApiKeyGrant) => request<IssuedApiKey>('POST', `/api/apikeys/${id}/rotate`, grant),
+    revoke: (id: string) => request<void>('POST', `/api/apikeys/${id}/revoke`),
   },
 
   users: {

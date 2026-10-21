@@ -106,7 +106,7 @@ public static class PasskeyEndpoints
             await audit.WriteAsync(Entry(ctx, user.Name, user.Id, "Passkey Sign-In", cred.Name, true, null), ct);
             var secret = token[(token.LastIndexOf('.') + 1)..];
             return Results.Ok(new PasskeySignInDto(SessionTokens.CsrfToken(secret), session.ExpiresAt, new WhoAmIDto(
-                user.Id, user.Name, user.Role.ToString(), Permissions.For(user.Role).Select(p => p.ToString()).ToArray())));
+                user.Id, user.Name, user.Role.ToString(), DtoMappings.Names(Permissions.For(user.Role)))));
         }).AllowAnonymous().RequireRateLimiting(SignInLimit);
 
         // A reloaded page recovers the CSRF token for its cookie here.
@@ -133,7 +133,8 @@ public static class PasskeyEndpoints
             return Results.NoContent();
         }).AllowAnonymous();
 
-        var passkeys = app.MapGroup("/api/passkeys").WithTags("Auth").RequireAuthorization();
+        // A passkey signs in with the whole role, so a key limited to scopes cannot add one.
+        var passkeys = app.MapGroup("/api/passkeys").WithTags("Auth").RequireAuthorization(AuthorizationSetup.Unscoped);
 
         passkeys.MapGet("/", async (ICurrentPrincipal me, AppDbContext db, CancellationToken ct) =>
         {

@@ -11,6 +11,8 @@ import ChevronDoubleRightIcon from './icons/ChevronDoubleRightIcon';
 import AvatarEditorModal from './AvatarEditorModal';
 import AuditLogIcon from './icons/AuditLogIcon';
 import ActiveConnectionsIcon from './icons/ActiveConnectionsIcon';
+import KeyIcon from './icons/KeyIcon';
+import { useAuth } from '../contexts/AuthContext';
 
 interface SidebarProps {
   currentView: View;
@@ -46,6 +48,7 @@ const NavItem: React.FC<{
 };
 
 const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, setIsCollapsed }) => {
+  const { hasPermission } = useAuth();
   const [isLogoEditorOpen, setIsLogoEditorOpen] = useState(false);
   const [customLogo, setCustomLogo] = useState<string | null>(null);
 
@@ -87,6 +90,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, se
           <NavItem view="servers" label="Servers" icon={<ServerIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
           <NavItem view="ssl" label="SSL" icon={<LockIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
           <NavItem view="users" label="Users" icon={<UsersIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          {hasPermission('ApiKeyManage') && (
+            <NavItem view="api-keys" label="API keys" icon={<KeyIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
+          )}
           <NavItem view="audit-log" label="Audit log" icon={<AuditLogIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
           <NavItem view="settings" label="Settings" icon={<SettingsIcon className="w-5 h-5 shrink-0" />} currentView={currentView} setView={setView} isCollapsed={isCollapsed} />
         </nav>

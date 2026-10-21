@@ -156,7 +156,7 @@ public static class CertificateEndpoints
             await audit.AuditAsync(me, ctx, "Renew Certificate", "Certificate", cert.Domain,
                 details: $"from serial {served.Serial}");
             return Results.Accepted($"/api/certificates/{cert.Id}/status", cert.ToDto(now));
-        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertWrite));
+        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.CertRenew));
 
         certs.MapDelete("/{id:guid}", async (
             Guid id, AppDbContext db, ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me, HttpContext ctx) =>

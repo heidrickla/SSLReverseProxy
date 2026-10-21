@@ -540,7 +540,7 @@ public class NewEndpointsIntegrationTests : IClassFixture<NewEndpointsIntegratio
         var client = Authed();
         var admin = (await client.GetFromJsonAsync<UserResult[]>("/api/users"))!.First(u => u.role == "Admin");
         var created = await (await client.PostAsJsonAsync("/api/apikeys",
-            new { userId = admin.id, name = "rotate-me", lifetimeDays = (int?)null })).Content.ReadFromJsonAsync<IssuedKey>();
+            new { userId = admin.id, name = "rotate-me", lifetimeDays = 30 })).Content.ReadFromJsonAsync<IssuedKey>();
 
         // Old key works.
         var oldClient = _factory.CreateClient();

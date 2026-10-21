@@ -87,7 +87,7 @@ const Users: React.FC = () => {
     const { users, addUser, hasPermission } = useAuth();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const scrollRef = useHorizontalScroll();
-    const canManageUsers = hasPermission('user:create');
+    const canManageUsers = hasPermission('UserWrite');
 
     return (
         <div className="gap-6 h-full flex flex-col">

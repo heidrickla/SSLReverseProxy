@@ -1,19 +1,21 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { AuthContextType, User, UserRole } from '../types';
 import useApiData from '../hooks/useApiData';
-import { Permission, roleCan } from '../utils/permissions';
-import { api, ApiError, apiKeyStore, csrfStore, sessionsAvailable } from '../services/apiClient';
+import { Permission } from '../utils/permissions';
+import { api, ApiError, apiKeyStore, csrfStore, sessionsAvailable, WhoAmI } from '../services/apiClient';
 import { getPasskey } from '../utils/webauthn';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Map the backend /whoami response into the app's User shape.
-const userFromWhoAmI = (w: { userId: string | null; name: string; role: string }): User => ({
+const userFromWhoAmI = (w: WhoAmI): User => ({
     id: w.userId ?? 'me',
     name: w.name,
     email: '',
     role: w.role as UserRole,
     lastLogin: new Date().toISOString(),
+    permissions: w.permissions,
+    apiKey: w.key ?? null,
 });
 
 const SIGN_OUT_UNCONFIRMED =
@@ -173,9 +175,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setCurrentUser(updatedUser);
     };
 
-    // UI-level permission check only; the backend enforces the real boundary.
+    // The server's effective set for this principal; the backend enforces the same set.
     const hasPermission = useCallback(
-        (permission: Permission) => roleCan(currentUser?.role, permission),
+        (permission: Permission) => currentUser?.permissions?.includes(permission) ?? false,
         [currentUser]
     );
 

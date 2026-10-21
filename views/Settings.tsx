@@ -15,7 +15,7 @@ const Settings: React.FC = () => {
     allThemes, deleteTheme,
     scale, setScale 
   } = useTheme();
-  const { hasPermission, passkeysEnabled } = useAuth();
+  const { hasPermission, passkeysEnabled, currentUser } = useAuth();
   const [isEditorOpen, setIsEditorOpen] = useState(false);
 
   const lightThemes = allThemes.filter(t => t.type === 'light');
@@ -116,9 +116,10 @@ const Settings: React.FC = () => {
         )}
       </div>
 
-      {passkeysEnabled && <PasskeysCard />}
+      {/* The server refuses passkey changes from a key limited to scopes. */}
+      {passkeysEnabled && !currentUser?.apiKey?.scopes && <PasskeysCard />}
 
-      {hasPermission('alert:manage') && <AlertsCard />}
+      {hasPermission('AlertManage') && <AlertsCard />}
 
       {isEditorOpen && <ThemeEditor onClose={() => setIsEditorOpen(false)} />}
     </div>

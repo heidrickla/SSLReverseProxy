@@ -2,7 +2,7 @@ import { Area } from 'react-easy-crop';
 import { Permission } from './utils/permissions';
 import type { ChallengeName, Rule } from './services/apiClient';
 
-export type View = 'dashboard' | 'proxy' | 'servers' | 'ssl' | 'users' | 'audit-log' | 'settings';
+export type View = 'dashboard' | 'proxy' | 'servers' | 'ssl' | 'users' | 'api-keys' | 'audit-log' | 'settings';
 
 // From the control plane's background probe of each enabled rule's upstreams; 'unknown' until the first probe.
 export type ServerStatus = 'active' | 'inactive' | 'error' | 'unknown';
@@ -50,6 +50,10 @@ export interface User {
   role: UserRole;
   avatar?: string;
   lastLogin: string;
+  /** The signed-in principal's effective permissions, from /api/whoami. */
+  permissions?: string[];
+  /** The API key the session signed in with; null scopes mean it follows the role. */
+  apiKey?: { id: string; name: string; expiresAt: string | null; scopes: string[] | null } | null;
 }
 
 export interface LogEntry {

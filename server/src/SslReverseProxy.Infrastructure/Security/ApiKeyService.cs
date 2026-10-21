@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
+using SslReverseProxy.Core.Security;
 using SslReverseProxy.Infrastructure.Persistence;
 
 namespace SslReverseProxy.Infrastructure.Security;
@@ -29,7 +30,8 @@ public sealed class ApiKeyService : IApiKeyService
         _clock = clock;
     }
 
-    public async Task<IssuedApiKey> CreateAsync(Guid userId, string name, TimeSpan? lifetime, CancellationToken ct = default)
+    public async Task<IssuedApiKey> CreateAsync(Guid userId, string name, DateTimeOffset? expiresAt,
+        IReadOnlyCollection<Permission>? scopes = null, CancellationToken ct = default)
     {
         var prefix = Base64Url(RandomNumberGenerator.GetBytes(PrefixBytes));
         var secret = Base64Url(RandomNumberGenerator.GetBytes(SecretBytes));
@@ -45,7 +47,8 @@ public sealed class ApiKeyService : IApiKeyService
             Name = name,
             UserId = userId,
             CreatedAt = now,
-            ExpiresAt = lifetime is { } l ? now.Add(l) : null,
+            ExpiresAt = expiresAt,
+            Scopes = scopes is null ? null : ApiKeyScopes.Format(scopes),
         };
 
         _db.ApiKeys.Add(record);
@@ -55,7 +58,7 @@ public sealed class ApiKeyService : IApiKeyService
         return new IssuedApiKey(record, token);
     }
 
-    public async Task<User?> AuthenticateAsync(string presentedToken, CancellationToken ct = default)
+    public async Task<ApiKey?> AuthenticateAsync(string presentedToken, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(presentedToken)) return null;
 
@@ -85,7 +88,7 @@ public sealed class ApiKeyService : IApiKeyService
         key.LastUsedAt = now;
         key.User.LastSeenAt = now;
         await _db.SaveChangesAsync(ct);
-        return key.User;
+        return key;
     }
 
     public async Task RevokeAsync(Guid apiKeyId, CancellationToken ct = default)

@@ -108,11 +108,15 @@ public sealed record IssuedApiKey(ApiKey Record, string PlaintextToken);
 
 public interface IApiKeyService
 {
-    /// <summary>Create a new key; the plaintext token is returned once and never persisted.</summary>
-    Task<IssuedApiKey> CreateAsync(Guid userId, string name, TimeSpan? lifetime, CancellationToken ct = default);
+    /// <summary>
+    /// Create a new key; the plaintext token is returned once and never persisted. Null scopes follow the
+    /// owner's role; callers check that scopes and expiry are allowed.
+    /// </summary>
+    Task<IssuedApiKey> CreateAsync(Guid userId, string name, DateTimeOffset? expiresAt,
+        IReadOnlyCollection<Permission>? scopes = null, CancellationToken ct = default);
 
-    /// <summary>Resolve a presented token to its owning user, or null if invalid/expired/revoked.</summary>
-    Task<User?> AuthenticateAsync(string presentedToken, CancellationToken ct = default);
+    /// <summary>Resolve a presented token to its key, owner loaded, or null if invalid/expired/revoked or the owner is inactive.</summary>
+    Task<ApiKey?> AuthenticateAsync(string presentedToken, CancellationToken ct = default);
 
     Task RevokeAsync(Guid apiKeyId, CancellationToken ct = default);
 }
@@ -129,5 +133,15 @@ public interface ICurrentPrincipal
     string Name { get; }
     Role Role { get; }
     bool IsAuthenticated { get; }
+
+    /// <summary>The API key the request signed in with, or null for a session.</summary>
+    Guid? ApiKeyId { get; }
+
+    /// <summary>True when the request signed in with a key limited to scopes.</summary>
+    bool IsScopedKey { get; }
+
+    /// <summary>The role's permissions narrowed to the key's scopes; empty when not signed in.</summary>
+    IReadOnlySet<Permission> Permissions { get; }
+
     bool Has(Permission permission);
 }

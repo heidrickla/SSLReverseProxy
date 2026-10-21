@@ -29,6 +29,9 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("ExpiresAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ExpiryAlertedDays")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Iterations")
                         .HasColumnType("INTEGER");
 
@@ -51,6 +54,10 @@ namespace SslReverseProxy.Infrastructure.Migrations
                     b.Property<byte[]>("Salt")
                         .IsRequired()
                         .HasColumnType("BLOB");
+
+                    b.Property<string>("Scopes")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
 
                     b.Property<byte[]>("SecretHash")
                         .IsRequired()
