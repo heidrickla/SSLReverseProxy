@@ -781,18 +781,24 @@ public class CaddyValidateStopTests
         var dir = Directory.CreateTempSubdirectory("sslrp-hang-");
         try
         {
-            // A "caddy" that never answers.
+            // A "caddy" that never answers, through a child process: the stop has to reach the child too.
             string path;
+            Func<bool?> child; // null until the child runs, then whether it still runs
             if (OperatingSystem.IsWindows())
             {
+                // The child holds its redirected output open while it runs.
+                var output = Path.Combine(dir.FullName, "child.txt");
                 path = Path.Combine(dir.FullName, "caddy.cmd");
-                File.WriteAllText(path, $"@\"{Path.Combine(Environment.SystemDirectory, "PING.EXE")}\" -n 60 127.0.0.1 >nul\r\n");
+                File.WriteAllText(path, $"@\"{Path.Combine(Environment.SystemDirectory, "PING.EXE")}\" -n 60 127.0.0.1 >\"{output}\"\r\n");
+                child = () => Written(output) == 0 ? null : HeldOpen(output);
             }
             else
             {
+                var pidFile = Path.Combine(dir.FullName, "child");
                 path = Path.Combine(dir.FullName, "caddy");
-                File.WriteAllText(path, "#!/bin/sh\nexec sleep 60\n");
+                File.WriteAllText(path, $"#!/bin/sh\nsleep 60 &\necho $! > '{pidFile}.tmp'\nmv '{pidFile}.tmp' '{pidFile}'\nwait\n");
                 File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                child = () => File.Exists(pidFile) ? Running(int.Parse(File.ReadAllText(pidFile).Trim())) : null;
             }
             using var c = new CaddyProxyController(
                 Options.Create(new ProxyOptions { CaddyPath = path, ConfigDirectory = dir.FullName }),
@@ -801,14 +807,60 @@ public class CaddyValidateStopTests
                 new RecentRequests(TimeProvider.System));
             var plan = new ProxyPlan([new ProxyRule { Domain = "a.example.com", UpstreamUrl = "http://10.0.0.2", Enabled = true }]);
 
-            using var ended = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            using var ended = new CancellationTokenSource();
             var started = Stopwatch.StartNew();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => c.ValidateConfigurationAsync(plan, ended.Token));
-            Assert.True(started.Elapsed < TimeSpan.FromSeconds(20), $"validate returned after {started.Elapsed}");
+            var validate = c.ValidateConfigurationAsync(plan, ended.Token);
+            Assert.True(await Until(() => child() == true, TimeSpan.FromSeconds(20)), "the child never started");
+            ended.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => validate);
+            Assert.True(started.Elapsed < TimeSpan.FromSeconds(30), $"validate returned after {started.Elapsed}");
+            Assert.True(await Until(() => child() == false, TimeSpan.FromSeconds(10)), "the child outlived the validate");
         }
         finally
         {
             try { dir.Delete(recursive: true); } catch (IOException) { /* best effort */ }
         }
+    }
+
+    private static async Task<bool> Until(Func<bool> condition, TimeSpan limit)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (clock.Elapsed > limit) return false;
+            await Task.Delay(100);
+        }
+        return true;
+    }
+
+    private static long Written(string file)
+    {
+        try
+        {
+            using var s = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return s.Length;
+        }
+        catch (IOException) { return 0; }
+    }
+
+    private static bool HeldOpen(string file)
+    {
+        try
+        {
+            using var s = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (IOException) { return true; }
+    }
+
+    // A zombie has stopped; it waits only for its parent to collect it.
+    private static bool Running(int pid)
+    {
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            return stat[(stat.LastIndexOf(')') + 2)..][0] != 'Z';
+        }
+        catch (IOException) { return false; }
     }
 }
