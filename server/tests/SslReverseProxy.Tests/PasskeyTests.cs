@@ -379,6 +379,40 @@ public class PasskeyTests : IDisposable
         Assert.Contains(expired.Headers.GetValues("Set-Cookie"), c => c.StartsWith(SessionTokens.CookieName + "=;"));
     }
 
+    [Theory]
+    [InlineData("sign-out")]
+    [InlineData("role")]
+    [InlineData("deactivate")]
+    public async Task ASessionsEventStream_EndsBeforeTheNextEvent_OnceTheSessionEnds(string change)
+    {
+        var (auth, userId, _) = await Register(Role.Editor);
+        var s = await SignIn(auth);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var stream = await _factory.Anonymous().SendAsync(
+            Req(HttpMethod.Get, "/api/events", s, csrf: false, origin: null), HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
+        using var reader = new StreamReader(await stream.Content.ReadAsStreamAsync(timeout.Token));
+        var events = _factory.Services.GetRequiredService<IEventStream>();
+
+        events.Publish(new ProxyEvent("test", "before", _factory.Clock.GetUtcNow(), null));
+        Assert.Contains("before", await ApiKeyScopeTests.NextEvent(reader, timeout.Token));
+
+        switch (change)
+        {
+            case "sign-out":
+                Assert.Equal(HttpStatusCode.NoContent, (await Send(Req(HttpMethod.Post, "/api/auth/logout", s))).StatusCode);
+                break;
+            case "role":
+                _factory.Db(db => db.Users.Where(u => u.Id == userId).ExecuteUpdate(u => u.SetProperty(x => x.Role, Role.Viewer)));
+                break;
+            default:
+                _factory.Db(db => db.Users.Where(u => u.Id == userId).ExecuteUpdate(u => u.SetProperty(x => x.IsActive, false)));
+                break;
+        }
+        events.Publish(new ProxyEvent("test", "after", _factory.Clock.GetUtcNow(), null));
+        Assert.Null(await ApiKeyScopeTests.NextEvent(reader, timeout.Token));
+    }
+
     [Fact]
     public async Task RoleChange_Deactivation_AndPasskeyDeletion_EndSessions()
     {

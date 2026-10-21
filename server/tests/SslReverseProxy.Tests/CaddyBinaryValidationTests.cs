@@ -240,7 +240,8 @@ public class CaddyBinaryValidationTests
 
     /// <summary>
     /// The builder writes forward_auth's expansion out by hand. Caddy's own adapter expands each provider's
-    /// example, and the verify call and the callback proxy must come out the same.
+    /// example, and the verify call and the callback proxy must come out the same, plus the deletion of every
+    /// provider's identity headers: on the verify call, first on a 2xx answer, and on the callback proxy.
     /// </summary>
     [Theory]
     [InlineData(SignInProviders.Authelia)]
@@ -269,18 +270,33 @@ public class CaddyBinaryValidationTests
         var rule = SignInBuilderTests.Rule(provider);
         var built = CaddyConfigBuilder.Build([rule], new ProxyOptions());
         var ours = SignInBuilderTests.SignInHandler(built, rule);
-        var theirs = proxies.Single(o => o["rewrite"] is not null);
-        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(theirs, ours), $"caddy:\n{theirs.ToJsonString()}\nours:\n{ours.ToJsonString()}");
+        var theirs = proxies.Single(o => o["rewrite"] is not null).DeepClone().AsObject();
+        theirs["headers"]!["request"]!["delete"] = Identity();
+        theirs["handle_response"]![0]!["routes"]!.AsArray().Insert(1, new System.Text.Json.Nodes.JsonObject
+        {
+            ["handle"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject
+                {
+                    ["handler"] = "headers", ["request"] = new System.Text.Json.Nodes.JsonObject { ["delete"] = Identity() },
+                },
+            },
+        });
+        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(theirs, ours), $"caddy plus the strip:\n{theirs.ToJsonString()}\nours:\n{ours.ToJsonString()}");
 
-        var callback = proxies.SingleOrDefault(o => o["rewrite"] is null);
+        var callback = proxies.SingleOrDefault(o => o["rewrite"] is null)?.DeepClone().AsObject();
         if (callback is null)
         {
             Assert.Single(SignInBuilderTests.Routes(built));
             return;
         }
+        callback["headers"] ??= new System.Text.Json.Nodes.JsonObject { ["request"] = new System.Text.Json.Nodes.JsonObject() };
+        callback["headers"]!["request"]!["delete"] = Identity();
         var ourCallback = SignInBuilderTests.Routes(built)[0]!["handle"]![0]!;
-        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(callback, ourCallback), $"caddy:\n{callback.ToJsonString()}\nours:\n{ourCallback.ToJsonString()}");
+        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(callback, ourCallback), $"caddy plus the strip:\n{callback.ToJsonString()}\nours:\n{ourCallback.ToJsonString()}");
     }
+
+    private static System.Text.Json.Nodes.JsonNode Identity() => System.Text.Json.Nodes.JsonNode.Parse(SignInBuilderTests.AllIdentity)!;
 
     private static IEnumerable<System.Text.Json.Nodes.JsonObject> Descendants(System.Text.Json.Nodes.JsonNode? node)
     {

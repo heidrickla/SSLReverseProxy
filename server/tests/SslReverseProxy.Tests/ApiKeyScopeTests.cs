@@ -111,12 +111,44 @@ public class ApiKeyScopeTests : IDisposable
     }
 
     [Fact]
-    public async Task AFullKey_StillFollowsItsOwnersRole()
+    public async Task AKeyWithoutStoredScopes_FollowsItsOwnersRole()
     {
         var (admin, _) = _factory.WithKey();
         var who = await Json(await admin.GetAsync("/api/whoami"));
         Assert.Equal(Enum.GetValues<Permission>().Length, who["permissions"]!.AsArray().Count);
         Assert.Null(who["key"]!["scopes"]);
+        Assert.True((bool)who["wholeRole"]!);
+    }
+
+    [Fact]
+    public async Task FullAccess_IsFixedWhenIssued_SoAPromotionDoesNotWidenIt()
+    {
+        var (admin, _) = _factory.WithKey();
+        var viewer = NewUser(Role.Viewer);
+        var issued = await Json(await admin.PostAsJsonAsync("/api/apikeys", new { userId = viewer, name = "full", lifetimeDays = 30 }));
+        var viewerNames = Permissions.For(Role.Viewer).Order().Select(p => p.ToString()).ToArray();
+        Assert.Equal(viewerNames, issued["scopes"]!.AsArray().Select(p => (string)p!));
+
+        _factory.Db(db => db.Users.Where(u => u.Id == viewer).ExecuteUpdate(s => s.SetProperty(u => u.Role, Role.Editor)));
+
+        var key = Client((string)issued["token"]!);
+        var who = await Json(await key.GetAsync("/api/whoami"));
+        Assert.Equal(viewerNames, who["permissions"]!.AsArray().Select(p => (string)p!));
+        Assert.False((bool)who["wholeRole"]!);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await key.PostAsJsonAsync("/api/servers", new { name = "promoted", host = "10.0.0.12", os = "linux" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task RotatingAKeyThatFollowsItsRole_FixesTheNewKeysScopes()
+    {
+        var (admin, _) = _factory.WithKey();
+        var (legacy, _) = _factory.WithKey();
+        var id = (string)(await Json(await legacy.GetAsync("/api/whoami")))["key"]!["id"]!;
+
+        var r = await admin.PostAsJsonAsync($"/api/apikeys/{id}/rotate", new { lifetimeDays = 30 });
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.Equal(Enum.GetValues<Permission>().Length, (await Json(r))["scopes"]!.AsArray().Count);
     }
 
     [Fact]
@@ -167,7 +199,18 @@ public class ApiKeyScopeTests : IDisposable
         Assert.Contains("UserWrite", await wider.Content.ReadAsStringAsync());
 
         var full = await manager.PostAsJsonAsync("/api/apikeys", new { userId = adminId, name = "full", lifetimeDays = 7 });
-        Assert.Equal(HttpStatusCode.Forbidden, full.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, full.StatusCode);
+        Assert.Equal(["ServerRead", "ApiKeyManage"], (await Json(full))["scopes"]!.AsArray().Select(p => (string)p!));
+    }
+
+    [Fact]
+    public async Task FullAccess_FromACallerHoldingNoneOfTheOwnersRole_IsRefused()
+    {
+        var (_, adminId) = _factory.WithKey();
+        var manager = await Scoped(adminId, "ApiKeyManage");
+        var viewer = NewUser(Role.Viewer);
+        var r = await manager.PostAsJsonAsync("/api/apikeys", new { userId = viewer, name = "full", lifetimeDays = 7 });
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
     }
 
     [Fact]
@@ -183,25 +226,35 @@ public class ApiKeyScopeTests : IDisposable
     }
 
     [Fact]
-    public async Task AScopedKey_CannotAddOrListPasskeys()
+    public async Task AKeyNarrowerThanItsOwnersRole_CannotAddOrListPasskeys()
     {
-        var (_, adminId) = _factory.WithKey();
+        var (admin, adminId) = _factory.WithKey();
         var key = await Scoped(adminId, "ServerRead", "ApiKeyManage", "UserWrite");
         Assert.Equal(HttpStatusCode.Forbidden, (await key.PostAsync("/api/passkeys/options", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await key.GetAsync("/api/passkeys")).StatusCode);
 
-        var (full, _) = _factory.WithKey();
-        Assert.Equal(HttpStatusCode.OK, (await full.PostAsync("/api/passkeys/options", null)).StatusCode);
+        var (followsRole, _) = _factory.WithKey();
+        Assert.Equal(HttpStatusCode.OK, (await followsRole.PostAsync("/api/passkeys/options", null)).StatusCode);
+
+        // Full access holds the whole role until a promotion leaves it behind.
+        var viewer = NewUser(Role.Viewer);
+        var full = Client((string)(await Json(await admin.PostAsJsonAsync("/api/apikeys",
+            new { userId = viewer, name = "full", lifetimeDays = 30 })))["token"]!);
+        Assert.Equal(HttpStatusCode.OK, (await full.GetAsync("/api/passkeys")).StatusCode);
+        _factory.Db(db => db.Users.Where(u => u.Id == viewer).ExecuteUpdate(s => s.SetProperty(u => u.Role, Role.Editor)));
+        Assert.Equal(HttpStatusCode.Forbidden, (await full.GetAsync("/api/passkeys")).StatusCode);
     }
 
     [Theory]
     [InlineData(null, null)]
     [InlineData(0, null)]
     [InlineData(366, null)]
+    [InlineData(2, null)]
+    [InlineData(45, null)]
     [InlineData(30, 10.0)]
     [InlineData(null, -1.0)]
     [InlineData(null, 365.1)]
-    public async Task ALifetimeOutsideOneTo365Days_IsRefused(int? days, double? expiresInDays)
+    public async Task ALifetimeOffTheListOrPastAYear_IsRefused(int? days, double? expiresInDays)
     {
         var (admin, adminId) = _factory.WithKey();
         DateTimeOffset? at = expiresInDays is { } d ? _factory.Clock.GetUtcNow().AddDays(d) : null;
@@ -233,6 +286,76 @@ public class ApiKeyScopeTests : IDisposable
         Assert.Equal(_factory.Clock.GetUtcNow().AddDays(7), DateTimeOffset.Parse((string)rotated["expiresAt"]!), TimeSpan.FromSeconds(5));
         Assert.Equal(HttpStatusCode.Unauthorized, (await Client((string)old["token"]!).GetAsync("/api/whoami")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await Client((string)rotated["token"]!).GetAsync("/api/whoami")).StatusCode);
+    }
+
+    private void Publish(string message) =>
+        _factory.Services.GetRequiredService<IEventStream>().Publish(new ProxyEvent("test", message, _factory.Clock.GetUtcNow(), null));
+
+    // The next data line, or null when the stream ends first.
+    internal static async Task<string?> NextEvent(StreamReader reader, CancellationToken ct)
+    {
+        while (await reader.ReadLineAsync(ct) is { } line)
+            if (line.StartsWith("data: ", StringComparison.Ordinal)) return line;
+        return null;
+    }
+
+    [Theory]
+    [InlineData("revoke")]
+    [InlineData("deactivate")]
+    [InlineData("lose-read")]
+    public async Task AnEventStream_EndsBeforeTheNextEvent_OnceItsKeyNoLongerHolds(string change)
+    {
+        var (admin, _) = _factory.WithKey();
+        var owner = NewUser(Role.Editor);
+        var issued = await Issue(admin, owner, new[] { "ServerRead" });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var stream = await Client((string)issued["token"]!).GetAsync("/api/events", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
+        using var reader = new StreamReader(await stream.Content.ReadAsStreamAsync(timeout.Token));
+
+        Publish("before");
+        Assert.Contains("before", await NextEvent(reader, timeout.Token));
+
+        switch (change)
+        {
+            case "revoke":
+                Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync($"/api/apikeys/{(string)issued["id"]!}/revoke", null)).StatusCode);
+                break;
+            case "deactivate":
+                _factory.Db(db => db.Users.Where(u => u.Id == owner).ExecuteUpdate(s => s.SetProperty(u => u.IsActive, false)));
+                break;
+            default:
+                _factory.Db(db => db.Users.Where(u => u.Id == owner).ExecuteUpdate(s => s.SetProperty(u => u.Role, Role.Viewer)));
+                _factory.Db(db => db.ApiKeys.Where(k => k.Id == Guid.Parse((string)issued["id"]!))
+                    .ExecuteUpdate(s => s.SetProperty(k => k.Scopes, "ServerWrite")));
+                break;
+        }
+        Publish("after");
+        Assert.Null(await NextEvent(reader, timeout.Token));
+    }
+
+    [Fact]
+    public async Task AnEventStream_EndsWhenItsKeyExpires()
+    {
+        var (admin, adminId) = _factory.WithKey();
+        var issued = await Issue(admin, adminId, new[] { "ServerRead" }, days: 1);
+        _factory.Clock.Advance(TimeSpan.FromDays(1) - TimeSpan.FromSeconds(2));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var stream = await Client((string)issued["token"]!).GetAsync("/api/events", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
+        using var reader = new StreamReader(await stream.Content.ReadAsStreamAsync(timeout.Token));
+        Assert.Null(await NextEvent(reader, timeout.Token));
+    }
+
+    [Fact]
+    public async Task RotateWithoutABody_KeepsALifetimeOffTheList()
+    {
+        var (admin, adminId) = _factory.WithKey();
+        var old = await Json(await admin.PostAsJsonAsync("/api/apikeys",
+            new { userId = adminId, name = "dated", expiresAt = _factory.Clock.GetUtcNow().AddDays(45), scopes = new[] { "ServerRead" } }));
+        var r = await admin.PostAsync($"/api/apikeys/{(string)old["id"]!}/rotate", null);
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.Equal(_factory.Clock.GetUtcNow().AddDays(45), DateTimeOffset.Parse((string)(await Json(r))["expiresAt"]!), TimeSpan.FromSeconds(5));
     }
 
     [Fact]

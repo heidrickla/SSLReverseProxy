@@ -52,6 +52,8 @@ export interface User {
   lastLogin: string;
   /** The signed-in principal's effective permissions, from /api/whoami. */
   permissions?: string[];
+  /** False for a key narrower than its owner's role, from /api/whoami. */
+  wholeRole?: boolean;
   /** The API key the session signed in with; null scopes mean it follows the role. */
   apiKey?: { id: string; name: string; expiresAt: string | null; scopes: string[] | null } | null;
 }

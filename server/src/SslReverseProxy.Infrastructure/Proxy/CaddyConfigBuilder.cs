@@ -691,7 +691,9 @@ public static class CaddyConfigBuilder
     /// <summary>
     /// Caddy's <c>forward_auth</c> expansion, as <c>caddy adapt</c> 2.11.7 writes it: a GET to the verify path
     /// with the method and URI in headers; on 2xx each identity header is deleted from the request and set
-    /// only when the provider sent it, and the request goes on; any other answer goes to the client.
+    /// only when the provider sent it, and the request goes on; any other answer goes to the client. Added to
+    /// it: every provider's identity headers are deleted from the verify call and, on 2xx, from the request
+    /// before the provider's own are set, so a client cannot send one a different provider would have set.
     /// </summary>
     private static JsonObject BuildSignInHandler(ProxyRule rule, string provider, ProxyOptions options)
     {
@@ -704,7 +706,14 @@ public static class CaddyConfigBuilder
             && (rule.CloudflareTeamDomain is null || rule.CloudflareAudience is null))
             throw new InvalidOperationException($"Rule '{rule.Domain}{rule.PathPrefix}' needs a Cloudflare Access team domain and audience.");
 
-        var good = new JsonArray { new JsonObject { ["handle"] = new JsonArray { new JsonObject { ["handler"] = "vars" } } } };
+        var good = new JsonArray
+        {
+            new JsonObject { ["handle"] = new JsonArray { new JsonObject { ["handler"] = "vars" } } },
+            new JsonObject
+            {
+                ["handle"] = new JsonArray { new JsonObject { ["handler"] = "headers", ["request"] = new JsonObject { ["delete"] = IdentityHeaders() } } },
+            },
+        };
         foreach (var header in profile.CopyHeaders.Order(StringComparer.Ordinal))
         {
             var placeholder = "{http.reverse_proxy.header." + header + "}";
@@ -766,12 +775,17 @@ public static class CaddyConfigBuilder
         // The control plane is called by its own name, so its AllowedHosts need not list the proxied hosts.
         if (provider == SignInProviders.CloudflareAccess)
             set["Host"] = new JsonArray { new Uri(verifier!, UriKind.Absolute).Authority };
-        handler["headers"] = new JsonObject { ["request"] = new JsonObject { ["set"] = set } };
+        handler["headers"] = new JsonObject { ["request"] = new JsonObject { ["set"] = set, ["delete"] = IdentityHeaders() } };
         handler["rewrite"] = new JsonObject { ["method"] = "GET", ["uri"] = uri };
         return handler;
     }
 
-    /// <summary>Authentik's outpost and oauth2-proxy's sign-in paths, proxied to the provider on each host whose rules use it.</summary>
+    private static JsonArray IdentityHeaders() => ToJsonArray(SignInProviders.IdentityHeaders);
+
+    /// <summary>
+    /// Authentik's outpost and oauth2-proxy's sign-in paths, proxied to the provider on each host whose rules use it,
+    /// without the client's identity headers.
+    /// </summary>
     private static IEnumerable<(bool Tls, JsonObject Route)> BuildSignInCallbackRoutes(IReadOnlyList<ProxyRule> active)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -781,18 +795,15 @@ public static class CaddyConfigBuilder
                 || profile.CallbackPrefix is not { } prefix || string.IsNullOrWhiteSpace(rule.SignInVerifierUrl)) continue;
             if (!seen.Add(rule.Domain.Trim())) continue;
             var proxy = VerifierProxy(rule.SignInVerifierUrl!);
+            var request = new JsonObject();
             if (provider == SignInProviders.OAuth2Proxy)
-                proxy["headers"] = new JsonObject
+                request["set"] = new JsonObject
                 {
-                    ["request"] = new JsonObject
-                    {
-                        ["set"] = new JsonObject
-                        {
-                            ["X-Forwarded-Uri"] = new JsonArray { "{http.request.uri}" },
-                            ["X-Real-Ip"] = new JsonArray { "{http.request.remote.host}" },
-                        },
-                    },
+                    ["X-Forwarded-Uri"] = new JsonArray { "{http.request.uri}" },
+                    ["X-Real-Ip"] = new JsonArray { "{http.request.remote.host}" },
                 };
+            request["delete"] = IdentityHeaders();
+            proxy["headers"] = new JsonObject { ["request"] = request };
             yield return (rule.EnableTls, new JsonObject
             {
                 ["match"] = new JsonArray

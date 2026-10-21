@@ -42,6 +42,13 @@ public static partial class SignInProviders
             [CloudflareEmailHeader], null, null),
     };
 
+    /// <summary>
+    /// Every provider's identity headers. A sign-in rule deletes them all from the client's request before the
+    /// verify call, the callback proxy and the upstream, so only the rule's own provider can set one.
+    /// </summary>
+    public static readonly IReadOnlyList<string> IdentityHeaders =
+        [.. Profiles.Values.SelectMany(p => p.CopyHeaders).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal)];
+
     /// <summary>Providers Caddy calls at the rule's verifier address; Cloudflare Access is checked by the control plane.</summary>
     public static bool UsesVerifier(string? provider) => provider is Authelia or Authentik or OAuth2Proxy;
 

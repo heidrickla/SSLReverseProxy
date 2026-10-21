@@ -49,7 +49,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentPrincipal, CurrentPrincipal>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
-builder.Services.AddSingleton<IAuthorizationHandler, UnscopedAuthorizationHandler>();
+builder.Services.AddSingleton<IAuthorizationHandler, WholeRoleAuthorizationHandler>();
 
 builder.Services.AddSingleton<PasskeyChallenges>();
 builder.Services.AddSingleton<IFido2>(_ => new Fido2(new Fido2Configuration
@@ -78,7 +78,7 @@ builder.Services.AddAuthentication(ApiKeyDefaults.Scheme)
 builder.Services.AddAuthorization(options =>
 {
     options.AddPermissionPolicies();
-    options.AddUnscopedPolicy();
+    options.AddWholeRolePolicy();
     // Deny by default: everything requires an authenticated principal unless it
     // explicitly opts out with AllowAnonymous.
     options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();

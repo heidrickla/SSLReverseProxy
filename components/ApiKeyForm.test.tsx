@@ -33,7 +33,7 @@ const owners = [
   { id: 'u-admin', name: 'Lewis', role: 'Admin' },
   { id: 'u-viewer', name: 'Guest', role: 'Viewer' },
 ];
-const admin = { permissions: all, scoped: false };
+const admin = { permissions: all };
 const NOW = new Date('2026-10-21T12:00:00Z');
 const now = () => NOW;
 
@@ -136,18 +136,31 @@ describe('ApiKeyForm', () => {
     expect(screen.getByRole('button', { name: 'Issue key' })).toHaveProperty('disabled', true);
   });
 
-  it('keeps a scoped caller from issuing full access or what it lacks', () => {
-    renderForm({ caller: { permissions: ['ServerRead', 'CertRead', 'ApiKeyManage'], scoped: true } });
-    expect(radio('Scope', 'Full access')).toHaveProperty('disabled', true);
+  it('keeps a narrower caller to what it holds, full access included', () => {
+    renderForm({ caller: { permissions: ['ServerRead', 'CertRead', 'ApiKeyManage'] } });
     expect(radio('Scope', 'Home Assistant')).toHaveProperty('disabled', true);
     expect(radio('Scope', 'Read only')).toHaveProperty('disabled', false);
+    fireEvent.click(radio('Scope', 'Full access'));
+    expect(granted()).toEqual(['Read servers, rules and traffic', 'Read certificates', 'Manage API keys']);
   });
 
-  it('says a full-access key follows the owner\'s role', () => {
+  it('says a full-access key is fixed when issued', () => {
     renderForm();
     fireEvent.click(radio('Scope', 'Full access'));
-    expect(screen.getByText(/follows Lewis's role/)).toBeTruthy();
+    expect(screen.getByText(/A later promotion of Lewis adds nothing/)).toBeTruthy();
     expect(granted()).toHaveLength(all.length);
+  });
+
+  it('rotates a key holding its owner\'s whole role as full access', async () => {
+    mocks.rotate.mockResolvedValue({ id: 'k2', name: 'All', token: 't', expiresAt: null, scopes: all });
+    const key: ApiKey = {
+      id: 'k1', name: 'All', prefix: 'abcd', userId: 'u-viewer', userName: 'Guest', createdAt: '2026-10-14T12:00:00Z',
+      expiresAt: '2026-10-21T12:00:00Z', revokedAt: null, lastUsedAt: null, scopes: ['AuditRead', 'CertRead', 'ServerRead'],
+    };
+    renderForm({ rotating: key, rotatingOwner: owners[1] });
+    expect(radio('Scope', 'Full access').getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate key' }));
+    await waitFor(() => expect(mocks.rotate).toHaveBeenCalledWith('k1', { lifetimeDays: 7, scopes: null }));
   });
 
   it('rotates with the old key\'s scope and lifetime selected', async () => {
@@ -178,13 +191,17 @@ describe('api key helpers', () => {
     expect(matchPreset(['CertRead', 'ServerRead'], options.presets)?.id).toBe('read-only');
     expect(matchPreset(['ServerRead'], options.presets)).toBeNull();
     expect(matchPreset(null, options.presets)?.id).toBe('full');
+    expect(matchPreset(options.roles.Viewer, options.presets)).toBeNull();
+    expect(matchPreset([...options.roles.Viewer].reverse(), options.presets, options.roles.Viewer)?.id).toBe('full');
+    expect(matchPreset(['ServerRead'], options.presets, options.roles.Viewer)).toBeNull();
   });
 
   it('names the problem with a scope set', () => {
     const viewer = { name: 'Guest', role: 'Viewer', permissions: options.roles.Viewer };
     expect(scopeProblem(['ServerRead'], viewer, admin)).toBeNull();
     expect(scopeProblem(['RuleWrite'], viewer, admin)).toContain('Viewer');
-    expect(scopeProblem(null, viewer, { permissions: ['ServerRead'], scoped: true })).toContain('full access');
+    expect(scopeProblem(null, viewer, { permissions: ['ServerRead'] })).toBeNull();
+    expect(scopeProblem(null, viewer, { permissions: ['UserWrite'] })).toContain('none of the Viewer');
   });
 
   it('reads a key\'s state and time left', () => {

@@ -13,8 +13,8 @@ interface ApiKeyFormProps {
   /** Who a new key can belong to; ignored when rotating. */
   owners: KeyOwner[];
   defaultOwnerId: string;
-  /** The signed-in principal: its effective permissions and whether it is a key limited to scopes. */
-  caller: { permissions: string[]; scoped: boolean };
+  /** The signed-in principal's effective permissions. */
+  caller: { permissions: string[] };
   rotating?: ApiKey;
   /** The rotated key's owner, when known; else the form assumes every permission and the server checks. */
   rotatingOwner?: KeyOwner;
@@ -50,7 +50,8 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({
     rotating ? keptLifetime(rotating, options, now()) : { kind: 'days', days: options.defaultLifetimeDays });
   const [selection, setSelection] = useState<Selection>(() => {
     if (!rotating) return { kind: 'preset', id: options.presets[0]?.id ?? 'full' };
-    const preset = matchPreset(rotating.scopes, options.presets);
+    const role = (rotatingOwner ?? { role: 'Admin' }).role;
+    const preset = matchPreset(rotating.scopes, options.presets, options.roles[role]);
     return preset ? { kind: 'preset', id: preset.id } : { kind: 'custom', scopes: rotating.scopes ?? [] };
   });
   const [busy, setBusy] = useState(false);
@@ -67,7 +68,7 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({
     ? ordered(selection.scopes)
     : options.presets.find(p => p.id === selection.id)?.scopes ?? null;
   const problem = scopeProblem(scopes, ownerFacts, caller);
-  const granted = scopes ?? ownerPermissions;
+  const granted = scopes ?? ownerPermissions.filter(p => caller.permissions.includes(p));
   const expiry = expiryFor(lifetime, now(), options.maxLifetimeDays);
   const nameProblem = !rotating && (name.trim().length === 0 || name.trim().length > 100);
 
@@ -213,7 +214,7 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({
             </ul>
           ) : <p className="text-sm text-on-surface-muted">Nothing yet.</p>}
           {scopes === null && owner && (
-            <p className="text-xs text-on-surface-muted mt-1">It follows {owner.name}'s role if that changes.</p>
+            <p className="text-xs text-on-surface-muted mt-1">Fixed when the key is issued. A later promotion of {owner.name} adds nothing to it.</p>
           )}
         </div>
         {problem && <p role="alert" className="mt-2 text-sm text-danger">{problem}</p>}

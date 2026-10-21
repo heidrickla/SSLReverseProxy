@@ -30,14 +30,17 @@ export const expiryFor = (lifetime: Lifetime, now: Date, maxDays: number): Date 
   return at.getTime() > now.getTime() ? at : null;
 };
 
-/** Why a scope set cannot be issued for this owner by this caller, or null when it can. Null scopes mean full access. */
+/**
+ * Why a scope set cannot be issued for this owner by this caller, or null when it can. Null scopes mean full access:
+ * the owner's role within the caller's permissions, fixed when the key is issued.
+ */
 export const scopeProblem = (
   scopes: string[] | null,
   owner: { name: string; role: string; permissions: string[] },
-  caller: { permissions: string[]; scoped: boolean },
+  caller: { permissions: string[] },
 ): string | null => {
   if (scopes === null) {
-    return caller.scoped ? 'Your key is limited to scopes, so it cannot issue full access.' : null;
+    return owner.permissions.some(p => caller.permissions.includes(p)) ? null : `You hold none of the ${owner.role} role's permissions.`;
   }
   if (scopes.length === 0) return 'Choose at least one permission.';
   const ownerLacks = scopes.filter(s => !owner.permissions.includes(s));
@@ -47,10 +50,16 @@ export const scopeProblem = (
   return null;
 };
 
-/** The preset a key's scopes match exactly, else null. */
-export const matchPreset = (scopes: string[] | null, presets: ApiKeyPreset[]): ApiKeyPreset | null =>
-  presets.find(p => (p.scopes === null) === (scopes === null)
-    && (p.scopes === null || (p.scopes.length === scopes!.length && p.scopes.every(s => scopes!.includes(s))))) ?? null;
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every(s => b.includes(s));
+
+/**
+ * The preset a key's scopes match exactly, else null. Full access matches a key that follows its owner's role
+ * (null scopes) and one holding the whole of `rolePermissions`, the owner's role now.
+ */
+export const matchPreset = (scopes: string[] | null, presets: ApiKeyPreset[], rolePermissions?: string[]): ApiKeyPreset | null =>
+  presets.find(p => p.scopes === null
+    ? scopes === null || (rolePermissions !== undefined && sameSet(scopes, rolePermissions))
+    : scopes !== null && sameSet(p.scopes, scopes)) ?? null;
 
 export type KeyState = 'active' | 'expiring' | 'expired' | 'revoked';
 

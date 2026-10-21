@@ -113,7 +113,7 @@ public interface IApiKeyService
 {
     /// <summary>
     /// Create a new key; the plaintext token is returned once and never persisted. Null scopes follow the
-    /// owner's role; callers check that scopes and expiry are allowed.
+    /// owner's role, which only the bootstrap key is issued with; callers check that scopes and expiry are allowed.
     /// </summary>
     Task<IssuedApiKey> CreateAsync(Guid userId, string name, DateTimeOffset? expiresAt,
         IReadOnlyCollection<Permission>? scopes = null, CancellationToken ct = default);
@@ -140,8 +140,8 @@ public interface ICurrentPrincipal
     /// <summary>The API key the request signed in with, or null for a session.</summary>
     Guid? ApiKeyId { get; }
 
-    /// <summary>True when the request signed in with a key limited to scopes.</summary>
-    bool IsScopedKey { get; }
+    /// <summary>True when the principal holds every permission of its role; a key narrower than its owner's role does not.</summary>
+    bool HoldsWholeRole { get; }
 
     /// <summary>The role's permissions narrowed to the key's scopes; empty when not signed in.</summary>
     IReadOnlySet<Permission> Permissions { get; }

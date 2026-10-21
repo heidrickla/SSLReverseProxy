@@ -130,7 +130,7 @@ test.describe.serial('the running proxy', () => {
       const away = await proxyRequest('authelia.example.com', '/whoami?x=1', { 'Remote-User': 'mallory' });
       expect(away.status).toBe(302);
       expect(away.headers.location).toBe('https://auth.example.com/');
-      expect(stub.verified.at(-1)).toEqual({ path: '/api/authz/forward-auth', method: 'GET', uri: '/whoami?x=1' });
+      expect(stub.verified.at(-1)).toEqual({ path: '/api/authz/forward-auth', method: 'GET', uri: '/whoami?x=1', user: undefined });
       const alice = await proxyRequest('authelia.example.com', '/whoami', { Cookie: 'idp=ok', 'Remote-User': 'mallory', 'Remote-Name': 'Mallory' });
       expect(alice.status).toBe(200);
       expect(echo(alice).path).toBe('/whoami');
@@ -142,9 +142,10 @@ test.describe.serial('the running proxy', () => {
       const signInRedirect = await proxyRequest('oauth2.example.com', '/whoami');
       expect(signInRedirect.status).toBe(302);
       expect(signInRedirect.headers.location).toBe('/oauth2/sign_in?rd=http://oauth2.example.com/whoami');
-      const page2 = await proxyRequest('oauth2.example.com', '/oauth2/sign_in?rd=x');
+      const page2 = await proxyRequest('oauth2.example.com', '/oauth2/sign_in?rd=x', { 'X-Auth-Request-User': 'mallory', 'Remote-User': 'mallory' });
       expect(page2.status).toBe(200);
       expect(page2.body).toBe('oauth2-proxy sign-in');
+      expect(stub.signInPage.at(-1)).toEqual({ user: undefined, remoteUser: undefined, uri: '/oauth2/sign_in?rd=x' });
       const bob = await proxyRequest('oauth2.example.com', '/whoami', { Cookie: 'idp=ok', 'X-Auth-Request-User': 'mallory' });
       expect(bob.status).toBe(200);
       expect(echo(bob).headers['x-auth-request-user']).toBe('bob');
@@ -154,12 +155,17 @@ test.describe.serial('the running proxy', () => {
       expect(refused.status).toBe(403);
       expect(refused.body).toBe('Sign-in required.');
       expect((await proxyRequest('cf.example.com', '/whoami', { 'Cf-Access-Jwt-Assertion': stub.token('carol@example.com', true) })).status).toBe(403);
+      // Another provider's identity headers from the client never reach the upstream.
       const carol = await proxyRequest('cf.example.com', '/whoami', {
         'Cf-Access-Jwt-Assertion': stub.token('carol@example.com'),
         'Cf-Access-Authenticated-User-Email': 'mallory@example.com',
+        'Remote-User': 'mallory',
+        'X-Authentik-Username': 'mallory',
       });
       expect(carol.status, carol.body).toBe(200);
       expect(echo(carol).headers['cf-access-authenticated-user-email']).toBe('carol@example.com');
+      expect(echo(carol).headers['remote-user']).toBeUndefined();
+      expect(echo(carol).headers['x-authentik-username']).toBeUndefined();
 
       await signIn(page, 'dark');
       await page.goto('/');
@@ -186,7 +192,8 @@ function signInStub() {
   const key = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const other = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const jwk = { ...key.publicKey.export({ format: 'jwk' }), kid: 'e2e', alg: 'RS256', use: 'sig' };
-  const verified: { path: string; method?: string; uri?: string }[] = [];
+  const verified: { path: string; method?: string; uri?: string; user?: string }[] = [];
+  const signInPage: { user?: string; remoteUser?: string; uri?: string }[] = [];
   const b64 = (v: object) => Buffer.from(JSON.stringify(v)).toString('base64url');
   const token = (email: string, forged = false) => {
     const now = Math.floor(Date.now() / 1000);
@@ -199,10 +206,17 @@ function signInStub() {
     const path = url.split('?')[0];
     const signedIn = (req.headers.cookie ?? '').includes('idp=ok');
     if (path === '/api/authz/forward-auth' || path === '/oauth2/auth') {
-      verified.push({ path, method: req.headers['x-forwarded-method'] as string, uri: req.headers['x-forwarded-uri'] as string });
+      verified.push({
+        path, method: req.headers['x-forwarded-method'] as string, uri: req.headers['x-forwarded-uri'] as string,
+        user: req.headers['remote-user'] as string | undefined,
+      });
       if (path === '/oauth2/auth') res.writeHead(signedIn ? 202 : 401, signedIn ? { 'X-Auth-Request-User': 'bob' } : {}).end();
       else res.writeHead(signedIn ? 200 : 302, signedIn ? { 'Remote-User': 'alice', 'Remote-Groups': 'admins' } : { Location: 'https://auth.example.com/' }).end();
     } else if (path === '/oauth2/sign_in') {
+      signInPage.push({
+        user: req.headers['x-auth-request-user'] as string | undefined, remoteUser: req.headers['remote-user'] as string | undefined,
+        uri: req.headers['x-forwarded-uri'] as string | undefined,
+      });
       res.writeHead(200, { 'Content-Type': 'text/plain' }).end('oauth2-proxy sign-in');
     } else if (path === `/${team}/certs`) {
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ keys: [jwk] }));
@@ -210,7 +224,7 @@ function signInStub() {
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ path: url, headers: req.headers }));
     }
   });
-  return { server, team, audience, token, verified };
+  return { server, team, audience, token, verified, signInPage };
 }
 
 async function expectNoEmptyCharts(page: Page) {

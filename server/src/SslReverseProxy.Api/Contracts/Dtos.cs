@@ -72,7 +72,10 @@ public sealed record UpdateRuleRequest(string Domain, string UpstreamUrl, bool E
 public sealed record ToggleRuleRequest(bool Enabled);
 public sealed record CreateUserRequest(string Name, string Email, Role Role);
 public sealed record UpdateUserRequest(string Name, Role Role, bool IsActive);
-/// <summary>One of LifetimeDays (1 to 365) or ExpiresAt (at most 365 days ahead). Null Scopes follow the owner's role.</summary>
+/// <summary>
+/// One of LifetimeDays (a listed day count) or ExpiresAt (at most 365 days ahead). Null Scopes are full access:
+/// the owner's role within the caller's permissions, fixed when the key is issued.
+/// </summary>
 public sealed record CreateApiKeyRequest(Guid UserId, string Name, int? LifetimeDays, DateTimeOffset? ExpiresAt = null, string[]? Scopes = null);
 /// <summary>A body chooses the new key's lifetime and scopes as on create; no body keeps the old key's.</summary>
 public sealed record RotateApiKeyRequest(int? LifetimeDays, DateTimeOffset? ExpiresAt = null, string[]? Scopes = null);
@@ -162,7 +165,7 @@ public sealed record SessionDto(string CsrfToken, DateTimeOffset ExpiresAt);
 public sealed record PasskeyDto(Guid Id, string Name, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt, bool BackedUp);
 public sealed record AlertDeliveryDto(string Target, bool Delivered, int? Status, string? Error, int Attempts);
 public sealed record UserDto(Guid Id, string Name, string Email, string Role, bool IsActive, DateTimeOffset? LastSeenAt);
-/// <summary>Null Scopes: the key follows its owner's role.</summary>
+/// <summary>Null Scopes: the bootstrap key, or a key issued before full access was stored as a list; it follows its owner's role.</summary>
 public sealed record ApiKeyDto(Guid Id, string Name, string Prefix, Guid UserId, string UserName, DateTimeOffset CreatedAt,
     DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, string[]? Scopes);
 public sealed record IssuedApiKeyDto(Guid Id, string Name, string Token, DateTimeOffset? ExpiresAt, string[]? Scopes);
@@ -173,8 +176,11 @@ public sealed record ApiKeyOptionsDto(int[] LifetimeDays, int DefaultLifetimeDay
 /// <summary>The key a request signed in with.</summary>
 public sealed record WhoAmIKeyDto(Guid Id, string Name, DateTimeOffset? ExpiresAt, string[]? Scopes);
 public sealed record AuditDto(long Id, DateTimeOffset Timestamp, string Actor, string Action, string TargetType, string TargetName, bool Success, string? SourceIp);
-/// <summary>Permissions are the effective ones: the role's, narrowed to the key's scopes.</summary>
-public sealed record WhoAmIDto(Guid? UserId, string Name, string Role, string[] Permissions, WhoAmIKeyDto? Key = null);
+/// <summary>
+/// Permissions are the effective ones: the role's, narrowed to the key's scopes. WholeRole is false for a key
+/// narrower than its owner's role, which cannot manage passkeys.
+/// </summary>
+public sealed record WhoAmIDto(Guid? UserId, string Name, string Role, string[] Permissions, bool WholeRole, WhoAmIKeyDto? Key = null);
 public sealed record ProxyStatusDto(string State, string Engine, int? ProcessId, DateTimeOffset? StartedAt, int ActiveRuleCount, string? Message);
 
 public static class DtoMappings

@@ -15,6 +15,7 @@ const userFromWhoAmI = (w: WhoAmI): User => ({
     role: w.role as UserRole,
     lastLogin: new Date().toISOString(),
     permissions: w.permissions,
+    wholeRole: w.wholeRole,
     apiKey: w.key ?? null,
 });
 

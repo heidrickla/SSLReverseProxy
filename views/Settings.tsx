@@ -117,8 +117,8 @@ const Settings: React.FC = () => {
         )}
       </div>
 
-      {/* The server refuses passkey changes from a key limited to scopes. */}
-      {passkeysEnabled && !currentUser?.apiKey?.scopes && <PasskeysCard />}
+      {/* The server refuses passkey changes from a key narrower than its owner's role. */}
+      {passkeysEnabled && currentUser?.wholeRole && <PasskeysCard />}
 
       {hasPermission('AlertManage') && <AlertsCard />}
 

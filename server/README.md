@@ -115,10 +115,10 @@ Meta
 
 - `GET /api/health`: anonymous liveness. `GET /api/ready`: anonymous readiness (database and proxy).
 - `GET /api/bootstrap-key`: one-time first-run key claim (Development and loopback only; 404 otherwise).
-- `GET /api/whoami`: current principal and its effective permissions (the role's, narrowed to a key's scopes); `key` holds the signing key's id, name, expiry and scopes.
+- `GET /api/whoami`: current principal, its effective permissions (the role's, narrowed to a key's scopes) and `wholeRole`; `key` holds the signing key's id, name, expiry and scopes.
 - `GET /api/instance`: `{instanceId, apiVersion, capabilities}` for any signed-in principal. The id is created on first start and does not change; `apiVersion` rises only for a change that breaks a client.
 - `GET /api/openapi/v1.json`: the OpenAPI document, for a principal with `ServerRead`, in every environment. It declares the `X-Api-Key` scheme and leaves out the bootstrap claim.
-- `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes, `certificate.status` when a certificate's does, `certificate.renewed` or `certificate.renew_failed` when a forced renewal ends, and `certificate.renew_cancelled` when a rollback stops one. Headers go out once the subscriber is registered, so no event published after the client has them is missed.
+- `GET /api/events`: Server-Sent Events, each `{type, message, at, actor}`. `server.health` is published when a server's status changes, `certificate.status` when a certificate's does, `certificate.renewed` or `certificate.renew_failed` when a forced renewal ends, and `certificate.renew_cancelled` when a rollback stops one. Headers go out once the subscriber is registered, so no event published after the client has them is missed. Each event goes out only while the key or session still holds `ServerRead`, unrevoked, unexpired and with its owner active; otherwise the stream ends. It also ends when the credential expires and 15 minutes after it opened, and the dashboard reconnects.
 
 Passkeys
 
@@ -208,6 +208,7 @@ Rules take an optional `signIn` object, `{provider, verifierUrl, teamDomain, aud
 | `cloudflare-access` | `teamDomain` (`<team>.cloudflareaccess.com`), `audience` (the application's AUD tag, 64 hex characters) | Asks this service at `Proxy:ControlPlaneUrl` + `/api/sign-in/cloudflare/{ruleId}`, which checks `Cf-Access-Jwt-Assertion` and answers with `Cf-Access-Authenticated-User-Email`. |
 
 - Each is Caddy's `forward_auth` as `caddy adapt` 2.11.7 expands it: a GET to the verify path with `X-Forwarded-Method` and `X-Forwarded-Uri`, keeping the client's query. On a 2xx each identity header is deleted from the request and set only when the provider sent it. Any other answer goes to the client as the provider gave it.
+- Every provider's identity headers in the table are deleted from the client's request on a sign-in rule: on the verify call, on a 2xx before the provider's own are set, and on the Authentik and oauth2-proxy paths proxied to the provider. An upstream behind Cloudflare Access never sees a client's `Remote-User`.
 - `verifierUrl` is the provider's address with no path, query, fragment or credentials, under the upstream SSRF policy.
 - The enabled rules on a host that use `authentik` or `oauth2-proxy` share one provider and address, and no rule's prefix may sit under that provider's path. Writes and apply refuse a set that breaks either.
 - The Cloudflare check: RS256 under a key from `Proxy:CloudflareAccessCertsUrl`, issuer `https://<teamDomain>`, the rule's audience, an expiry, 60 s of clock skew. Keys are kept an hour and fetched again for an unknown key id at most every 30 s. When the keys cannot be read, the last ones serve for 24 hours. A service token carries no email, and the header is left off. The check reads the rule as stored, so a change to its team or audience applies before the next Reload.
@@ -308,14 +309,14 @@ Users, keys, audit
 
 API keys
 
-Token `srp.<prefix>.<secret>`, sent as `X-Api-Key` or `Authorization: Bearer`. A key lasts 1 to 365 days. Its scopes are permission names held within the owner's current role: demoting the owner narrows the key at once. Null scopes follow the role. Scopes and expiry are fixed at issue. All endpoints need `ApiKeyManage` (Admin).
+Token `srp.<prefix>.<secret>`, sent as `X-Api-Key` or `Authorization: Bearer`. A key lasts 1, 7, 30, 90 or 365 days, or until a date at most 365 days away. Its scopes are permission names held within the owner's current role: demoting the owner narrows the key at once. Null scopes on create or rotate mean full access: the owner's role within the caller's permissions, stored as that list. Scopes and expiry are fixed at issue. All endpoints need `ApiKeyManage` (Admin).
 
 | Endpoint | |
 | --- | --- |
 | `GET /api/apikeys` | Keys, newest first, with owner, scopes, expiry, last use and revocation. `userId` filters. |
 | `GET /api/apikeys/options` | Lifetime presets in days, the default and maximum, scope presets, every permission, and each role's permissions. |
-| `POST /api/apikeys` | `{userId, name, lifetimeDays \| expiresAt, scopes}` returns the token once. 400 for a lifetime outside 1 to 365 days, an unknown or empty scope list, or a scope the owner's role lacks; 403 for a scope the caller lacks, or null scopes from a scoped key. |
-| `POST /api/apikeys/{id}/rotate` | Issues a new key for the same owner and name and revokes the old one in one transaction. A body chooses lifetime and scopes as on create; no body keeps the old ones (a non-expiring key needs a body). 409 for a revoked key. |
+| `POST /api/apikeys` | `{userId, name, lifetimeDays \| expiresAt, scopes}` returns the token once. 400 for `lifetimeDays` off the list, an `expiresAt` past 365 days, an unknown or empty scope list, or a scope the owner's role lacks; 403 for a scope the caller lacks, or full access from a caller holding none of the owner's role. |
+| `POST /api/apikeys/{id}/rotate` | Issues a new key for the same owner and name and revokes the old one in one transaction. A body chooses lifetime and scopes as on create; no body keeps the old ones, the lifetime in whole days (a non-expiring key needs a body). 409 for a revoked key. |
 | `POST /api/apikeys/{id}/revoke` | Ends the key at once. |
 
 | Preset | Scopes |
@@ -323,7 +324,7 @@ Token `srp.<prefix>.<secret>`, sent as `X-Api-Key` or `Authorization: Bearer`. A
 | Read only | `ServerRead`, `CertRead` |
 | Home Assistant | `ServerRead`, `CertRead`, `ProxyReload`, `CertRenew` |
 | Rules editor | `ServerRead`, `RuleWrite`, `ProxyReload` |
-| Full access | null: the owner's role |
+| Full access | null: the owner's role when issued |
 
 | Permission | Allows | Roles |
 | --- | --- | --- |
@@ -342,7 +343,7 @@ Token `srp.<prefix>.<secret>`, sent as `X-Api-Key` or `Authorization: Bearer`. A
 | `BackupManage` | Export and import backups | Admin |
 | `RecentRequestsRead` | A rule's recent requests: paths and client IPs | Editor, Admin |
 
-A scoped key cannot manage passkeys: a passkey signs in with the whole role. The bootstrap key follows the admin role and does not expire.
+Only a principal holding its whole role manages passkeys, since a passkey signs in with the whole role: a key narrower than its owner's role is refused, including a full-access key whose owner was promoted since. `whoami` reports this as `wholeRole`. The bootstrap key is the one key with null scopes: it follows the admin role and does not expire.
 
 ## Deployment
 

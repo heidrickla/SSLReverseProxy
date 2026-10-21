@@ -12,6 +12,9 @@ namespace SslReverseProxy.Api.Endpoints;
 
 public static class AdminEndpoints
 {
+    /// <summary>The longest an event stream stays open; the dashboard reconnects and signs in again.</summary>
+    internal static readonly TimeSpan EventStreamLifetime = TimeSpan.FromMinutes(15);
+
     public static IEndpointRouteBuilder MapAdminEndpoints(this IEndpointRouteBuilder app)
     {
         MapMeta(app);
@@ -29,7 +32,7 @@ public static class AdminEndpoints
                 ? await db.ApiKeys.AsNoTracking().FirstOrDefaultAsync(k => k.Id == kid, ct)
                 : null;
             return Results.Ok(new WhoAmIDto(
-                me.UserId, me.Name, me.Role.ToString(), DtoMappings.Names(me.Permissions),
+                me.UserId, me.Name, me.Role.ToString(), DtoMappings.Names(me.Permissions), me.HoldsWholeRole,
                 key is null ? null : new WhoAmIKeyDto(key.Id, key.Name, key.ExpiresAt, DtoMappings.ScopeNames(key.Scopes))));
         })
             .RequireAuthorization()
@@ -79,23 +82,45 @@ public static class AdminEndpoints
             return dbOk ? Results.Ok(dto) : Results.Json(dto, statusCode: StatusCodes.Status503ServiceUnavailable);
         }).AllowAnonymous().WithTags("Meta");
 
-        // Server-Sent Events stream of control-plane events for a live dashboard.
-        app.MapGet("/api/events", async (IEventStream events, HttpContext ctx) =>
+        // Server-Sent Events stream of control-plane events for a live dashboard. It ends when the key or session
+        // expires and at most EventStreamLifetime after it opened, and each event goes out only while the
+        // credential still holds ServerRead, so a revoked key or a deactivated owner hears nothing more.
+        app.MapGet("/api/events", async (IEventStream events, AppDbContext db, TimeProvider clock, HttpContext ctx) =>
         {
+            var now = clock.GetUtcNow();
+            var until = await CredentialCheck.ValidUntilAsync(ctx.User, Permission.ServerRead, db, now, ctx.RequestAborted);
+            if (until is not { } validUntil)
+            {
+                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+            var left = validUntil - now;
+            using var expiry = new CancellationTokenSource(left < EventStreamLifetime ? left : EventStreamLifetime, clock);
+            using var end = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, expiry.Token);
+
             ctx.Response.Headers.ContentType = "text/event-stream";
             ctx.Response.Headers.CacheControl = "no-cache";
 
             // The first MoveNextAsync registers the subscriber; doing it before the headers
             // go out means a client that has the response cannot miss a later event.
-            await using var subscription = events.Subscribe(ctx.RequestAborted).GetAsyncEnumerator(ctx.RequestAborted);
-            var next = subscription.MoveNextAsync();
-            await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
-            while (await next)
+            await using var subscription = events.Subscribe(end.Token).GetAsyncEnumerator(end.Token);
+            try
             {
-                var json = System.Text.Json.JsonSerializer.Serialize(subscription.Current, System.Text.Json.JsonSerializerOptions.Web);
-                await ctx.Response.WriteAsync($"data: {json}\n\n", ctx.RequestAborted);
-                await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
-                next = subscription.MoveNextAsync();
+                var next = subscription.MoveNextAsync();
+                await ctx.Response.Body.FlushAsync(end.Token);
+                while (await next)
+                {
+                    if (await CredentialCheck.ValidUntilAsync(ctx.User, Permission.ServerRead, db, clock.GetUtcNow(), end.Token) is null)
+                        break;
+                    var json = System.Text.Json.JsonSerializer.Serialize(subscription.Current, System.Text.Json.JsonSerializerOptions.Web);
+                    await ctx.Response.WriteAsync($"data: {json}\n\n", end.Token);
+                    await ctx.Response.Body.FlushAsync(end.Token);
+                    next = subscription.MoveNextAsync();
+                }
+            }
+            catch (OperationCanceledException) when (end.IsCancellationRequested)
+            {
+                // Expired, past its lifetime, or the client left: the response ends here.
             }
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead)).WithTags("Meta");
     }

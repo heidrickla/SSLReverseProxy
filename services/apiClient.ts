@@ -151,12 +151,15 @@ export interface RuleInput {
   /** Omitted or null leaves the rule's sign-in as it is; sent, it replaces it. */
   signIn?: RuleSignInInput | null;
 }
-/** `permissions` is the effective set: the role's, narrowed to the key's scopes. `key` is set when signed in with a key. */
+/**
+ * `permissions` is the effective set: the role's, narrowed to the key's scopes. `wholeRole` is false for a key narrower
+ * than its owner's role, which cannot manage passkeys. `key` is set when signed in with a key.
+ */
 export interface WhoAmI {
-  userId: string | null; name: string; role: string; permissions: string[];
+  userId: string | null; name: string; role: string; permissions: string[]; wholeRole: boolean;
   key?: { id: string; name: string; expiresAt: string | null; scopes: string[] | null } | null;
 }
-/** Null `scopes`: the key follows its owner's role. */
+/** Null `scopes`: the bootstrap key, or one issued before full access was stored as a list; it follows its owner's role. */
 export interface ApiKey {
   id: string; name: string; prefix: string; userId: string; userName: string; createdAt: string;
   expiresAt: string | null; revokedAt: string | null; lastUsedAt: string | null; scopes: string[] | null;
@@ -167,7 +170,7 @@ export interface ApiKeyOptions {
   lifetimeDays: number[]; defaultLifetimeDays: number; maxLifetimeDays: number;
   presets: ApiKeyPreset[]; permissions: string[]; roles: Record<string, string[]>;
 }
-/** One of lifetimeDays or expiresAt. Null scopes follow the owner's role. */
+/** One of lifetimeDays or expiresAt. Null scopes are full access, fixed when the key is issued. */
 export interface ApiKeyGrant { lifetimeDays?: number; expiresAt?: string; scopes: string[] | null; }
 /** A WebAuthn ceremony: `options` go to the browser, `handle` comes back with its answer. */
 export interface PasskeyCeremony<T> { handle: string; options: T; }

@@ -10,7 +10,8 @@ namespace SslReverseProxy.Api.Endpoints;
 
 /// <summary>
 /// Issues, lists, rotates and revokes API keys. A key's scopes stay within its owner's role and within the
-/// caller's own permissions, so no key issues a wider one. Lifetime is 1 to 365 days for every issued key.
+/// caller's own permissions, so no key issues a wider one, and they are fixed when the key is issued.
+/// Lifetime is one of the listed day counts or a date at most 365 days away.
 /// </summary>
 public static class ApiKeyEndpoints
 {
@@ -97,28 +98,32 @@ public static class ApiKeyEndpoints
 
     /// <summary>
     /// Null when the lifetime and scopes may be issued to <paramref name="owner"/> by <paramref name="me"/>;
-    /// otherwise the refusal. Exactly one of days or a date; scopes within the owner's role and the caller's
-    /// permissions; a key that follows its owner's role only from a caller that is not a scoped key.
+    /// otherwise the refusal. Exactly one of a listed day count or a date; scopes within the owner's role and
+    /// the caller's permissions. Null scope names mean full access, resolved here to the owner's role as it is
+    /// now within the caller's permissions, so a later promotion of the owner does not widen the key.
+    /// <paramref name="kept"/> takes a rotated key's own day count, which need not be a listed one.
     /// </summary>
     internal static IResult? Check(int? lifetimeDays, DateTimeOffset? requestedExpiry, string[]? scopeNames,
         User owner, ICurrentPrincipal me, DateTimeOffset now,
-        out DateTimeOffset expiresAt, out IReadOnlySet<Permission>? scopes, bool kept = false)
+        out DateTimeOffset expiresAt, out IReadOnlySet<Permission> scopes, bool kept = false)
     {
         expiresAt = default;
-        scopes = null;
+        scopes = new HashSet<Permission>();
         var max = TimeSpan.FromDays(ApiKeyScopes.MaxLifetimeDays);
+        var listed = string.Join(", ", ApiKeyScopes.LifetimeDays);
 
         switch (lifetimeDays, requestedExpiry)
         {
             case (null, null):
                 return Invalid("lifetimeDays", kept
-                    ? "The old key does not expire; choose how long the new key lasts, 1 to 365 days."
-                    : "Choose how long the key lasts, 1 to 365 days.");
+                    ? $"The old key does not expire; choose how long the new key lasts: {listed} days, or a date."
+                    : $"Choose how long the key lasts: {listed} days, or a date.");
             case ({ }, { }):
                 return Invalid("lifetimeDays", "Send lifetimeDays or expiresAt, not both.");
             case ({ } days, null):
-                if (days is < 1 or > ApiKeyScopes.MaxLifetimeDays)
-                    return Invalid("lifetimeDays", "A key lasts 1 to 365 days.");
+                // A kept day count is the old key's, already held within 1 to 365 days.
+                if (!kept && !ApiKeyScopes.LifetimeDays.Contains(days))
+                    return Invalid("lifetimeDays", $"lifetimeDays is one of {listed}; send expiresAt for another date.");
                 expiresAt = now.AddDays(days);
                 break;
             case (null, { } at):
@@ -130,9 +135,11 @@ public static class ApiKeyEndpoints
 
         if (scopeNames is null)
         {
-            if (me.IsScopedKey)
-                return Results.Json(new { message = "A key limited to scopes cannot issue a key that follows its owner's role." },
+            var full = Permissions.For(owner.Role).Intersect(me.Permissions).ToHashSet();
+            if (full.Count == 0)
+                return Results.Json(new { message = $"You hold none of the permissions {owner.Name} ({owner.Role}) has." },
                     statusCode: StatusCodes.Status403Forbidden);
+            scopes = full;
             return null;
         }
 
@@ -165,7 +172,7 @@ public static class ApiKeyEndpoints
         DtoMappings.ScopeNames(issued.Record.Scopes));
 
     private static string Describe(User owner, ApiKey key) =>
-        $"owner {owner.Name}; expires {key.ExpiresAt:yyyy-MM-dd HH:mm 'UTC'}; scopes {key.Scopes ?? "role"}";
+        $"owner {owner.Name}; expires {key.ExpiresAt:yyyy-MM-dd HH:mm 'UTC'}; scopes {key.Scopes}";
 
     private static IResult Invalid(string field, string message) =>
         Results.ValidationProblem(new Dictionary<string, string[]> { [field] = [message] });

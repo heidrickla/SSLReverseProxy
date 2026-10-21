@@ -71,7 +71,7 @@ const ApiKeys: React.FC = () => {
   const owners: KeyOwner[] = users.length > 0
     ? users.map(u => ({ id: u.id, name: u.name, role: u.role }))
     : currentUser ? [{ id: currentUser.id, name: currentUser.name, role: currentUser.role }] : [];
-  const caller = { permissions: currentUser?.permissions ?? [], scoped: !!currentUser?.apiKey?.scopes };
+  const caller = { permissions: currentUser?.permissions ?? [] };
   const now = new Date();
   const visible = (keys ?? []).filter(k => showInactive || keyState(k, now) === 'active' || keyState(k, now) === 'expiring');
 
@@ -94,7 +94,8 @@ const ApiKeys: React.FC = () => {
   };
 
   const scopeText = (key: ApiKey): { text: string; title: string } => {
-    const preset = options ? matchPreset(key.scopes, options.presets) : null;
+    const ownerRole = owners.find(o => o.id === key.userId)?.role;
+    const preset = options ? matchPreset(key.scopes, options.presets, ownerRole ? options.roles[ownerRole] : undefined) : null;
     const title = key.scopes ? key.scopes.map(permissionLabel).join(', ') : 'Everything the owner\'s role allows';
     if (preset) return { text: preset.name, title };
     return { text: `Custom, ${key.scopes!.length} permission${key.scopes!.length === 1 ? '' : 's'}`, title };

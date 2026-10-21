@@ -46,6 +46,9 @@ public class SignInBuilderTests
     internal static JsonObject SignInHandler(JsonNode cfg, ProxyRule rule) =>
         RuleRoute(cfg, rule)["handle"]!.AsArray().Select(h => h!.AsObject()).Single(h => h["rewrite"]?["method"] is not null);
 
+    /// <summary>Every provider's identity headers as a JSON array.</summary>
+    internal static string AllIdentity => new JsonArray([.. SignInProviders.IdentityHeaders.Select(h => (JsonNode)h)]).ToJsonString();
+
     private static string Copy(string header) => """
         {"handle":[{"handler":"headers","request":{"delete":["HDR"]}}]},
         {"handle":[{"handler":"headers","request":{"set":{"HDR":["{http.reverse_proxy.header.HDR}"]}}}],
@@ -71,12 +74,13 @@ public class SignInBuilderTests
               "upstreams":[{"dial":"idp.internal:9091"}],
               "handle_response":[{"match":{"status_code":[2]},"routes":[
                 {"handle":[{"handler":"vars"}]},
+                {"handle":[{"handler":"headers","request":{"delete":ALL}}]},
                 COPIES
               ]}],
-              "headers":{"request":{"set":{"X-Forwarded-Method":["{http.request.method}"],"X-Forwarded-Uri":["{http.request.uri}"]}}},
+              "headers":{"request":{"set":{"X-Forwarded-Method":["{http.request.method}"],"X-Forwarded-Uri":["{http.request.uri}"]},"delete":ALL}},
               "rewrite":{"method":"GET","uri":"/api/authz/forward-auth"}
             }
-            """.Replace("COPIES", copies, StringComparison.Ordinal));
+            """.Replace("COPIES", copies, StringComparison.Ordinal).Replace("ALL", AllIdentity, StringComparison.Ordinal));
         var handler = SignInHandler(cfg, rule);
         Assert.True(JsonNode.DeepEquals(expected, handler), handler.ToJsonString());
 
@@ -107,9 +111,9 @@ public class SignInBuilderTests
         var callback = JsonNode.Parse("""
             {"match":[{"host":["a.example.com"],"path":["/oauth2/*"]}],
              "handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"idp.internal:9091"}],
-               "headers":{"request":{"set":{"X-Forwarded-Uri":["{http.request.uri}"],"X-Real-Ip":["{http.request.remote.host}"]}}}}],
+               "headers":{"request":{"set":{"X-Forwarded-Uri":["{http.request.uri}"],"X-Real-Ip":["{http.request.remote.host}"]},"delete":ALL}}}],
              "terminal":true}
-            """);
+            """.Replace("ALL", AllIdentity, StringComparison.Ordinal));
         Assert.True(JsonNode.DeepEquals(callback, routes[0]), routes[0]!.ToJsonString());
         Assert.Equal("b.example.com", (string?)routes[1]!["match"]![0]!["host"]![0]);
         Assert.Equal("/oauth2/*", (string?)routes[1]!["match"]![0]!["path"]![0]);
@@ -124,7 +128,7 @@ public class SignInBuilderTests
         var handler = SignInHandler(cfg, rule);
         Assert.Equal("/outpost.goauthentik.io/auth/caddy", (string?)handler["rewrite"]!["uri"]);
         Assert.Single(handler["handle_response"]!.AsArray());
-        Assert.Equal(12, (handler["handle_response"]![0]!["routes"]!.AsArray().Count - 1) / 2);
+        Assert.Equal(12, (handler["handle_response"]![0]!["routes"]!.AsArray().Count - 2) / 2);
         Assert.Equal("authentik.internal:9443", (string?)handler["upstreams"]![0]!["dial"]);
         var tls = JsonNode.Parse("""{"protocol":"http","tls":{}}""");
         Assert.True(JsonNode.DeepEquals(tls, handler["transport"]));
@@ -132,7 +136,8 @@ public class SignInBuilderTests
         var callback = Routes(cfg)[0]!;
         Assert.Equal("/outpost.goauthentik.io/*", (string?)callback["match"]![0]!["path"]![0]);
         Assert.True(JsonNode.DeepEquals(tls, callback["handle"]![0]!["transport"]));
-        Assert.Null(callback["handle"]![0]!["headers"]);
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse($"{{\"request\":{{\"delete\":{AllIdentity}}}}}"), callback["handle"]![0]!["headers"]),
+            callback["handle"]![0]!["headers"]!.ToJsonString());
     }
 
     [Fact]
@@ -145,9 +150,17 @@ public class SignInBuilderTests
         Assert.Equal("/api/sign-in/cloudflare/" + rule.Id, (string?)handler["rewrite"]!["uri"]);
         Assert.Equal("127.0.0.1:5195", (string?)handler["headers"]!["request"]!["set"]!["Host"]![0]);
         var routes = handler["handle_response"]![0]!["routes"]!.AsArray();
-        Assert.Equal(3, routes.Count);
-        Assert.Equal(SignInProviders.CloudflareEmailHeader, (string?)routes[1]!["handle"]![0]!["request"]!["delete"]![0]);
+        Assert.Equal(4, routes.Count);
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(AllIdentity), routes[1]!["handle"]![0]!["request"]!["delete"]), routes[1]!.ToJsonString());
+        Assert.Equal(SignInProviders.CloudflareEmailHeader, (string?)routes[2]!["handle"]![0]!["request"]!["delete"]![0]);
         Assert.Single(Routes(cfg));
+    }
+
+    [Fact]
+    public void TheIdentityHeaders_AreEveryProvidersCopyHeaders()
+    {
+        var copied = SignInProviders.Profiles.Values.SelectMany(p => p.CopyHeaders).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.True(copied.SetEquals(SignInProviders.IdentityHeaders), string.Join(", ", SignInProviders.IdentityHeaders));
     }
 
     [Fact]

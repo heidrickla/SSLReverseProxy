@@ -2,12 +2,16 @@ using SslReverseProxy.Core.Domain;
 
 namespace SslReverseProxy.Core.Security;
 
-/// <summary>A named set of scopes offered when a key is issued. Null scopes mean everything the owner's role allows.</summary>
+/// <summary>
+/// A named set of scopes offered when a key is issued. Null scopes mean everything the owner's role allows
+/// when the key is issued, stored then as that list.
+/// </summary>
 public sealed record ApiKeyPreset(string Id, string Name, string Description, IReadOnlyList<Permission>? Scopes);
 
 /// <summary>
 /// How a key's scopes are stored, and the presets and lifetimes keys are issued with. A key's scopes are a
-/// comma-separated list of permission names; null means the key follows its owner's role.
+/// comma-separated list of permission names. Null belongs to the bootstrap key and to keys issued before
+/// full access was stored as a list; those follow the owner's role until they are rotated.
 /// </summary>
 public static class ApiKeyScopes
 {
@@ -23,7 +27,7 @@ public static class ApiKeyScopes
             [Permission.ServerRead, Permission.CertRead, Permission.ProxyReload, Permission.CertRenew]),
         new("rules-editor", "Rules editor", "Edit rules, preview and reload the proxy.",
             [Permission.ServerRead, Permission.RuleWrite, Permission.ProxyReload]),
-        new("full", "Full access", "Everything the owner's role allows, now and after a role change.", null),
+        new("full", "Full access", "Everything the owner's role allows today. A later promotion does not widen it.", null),
     ];
 
     /// <summary>The stored form. Unknown names are dropped, so a name removed from the code grants nothing.</summary>
