@@ -8,8 +8,9 @@
 # SSLRP_REQUIRE_CADDY=1 makes the Caddy tests fail, not skip, when the binary or
 # a module is missing.
 #
-# The forge holds main and GitHub mirrors it. Every job runs on GitHub only:
-# the forge's shared runner skips them (github.server_url).
+# The forge holds main and GitHub mirrors it; both run these jobs. The forge's
+# Gitea ignores a job's timeout-minutes, concurrency and permissions, so every
+# step that can hang carries its own timeout-minutes.
 name: CI
 
 on:
@@ -46,7 +47,6 @@ jobs:
   # original workflow for that reason, even though both now do more than before.
   backend:
     name: Backend (.NET)
-    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -61,9 +61,13 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - uses: ./.github/actions/caddy
+        timeout-minutes: 15
       - run: dotnet restore
+        timeout-minutes: 10
       - run: dotnet build --no-restore --configuration Release
+        timeout-minutes: 10
       - run: dotnet test --no-build --configuration Release --verbosity normal
+        timeout-minutes: 15
         env:
           SSLRP_REQUIRE_CADDY: '1'
 
@@ -94,6 +98,7 @@ jobs:
       # pipefail matters here: without it the pipeline would report the parser's
       # status only, and a dotnet crash producing no output would sail through.
       - name: Dependency CVEs (.NET, high+)
+        timeout-minutes: 5
         run: |
           set -uo pipefail
           dotnet list package --vulnerable --include-transitive --format json \
@@ -101,7 +106,6 @@ jobs:
 
   frontend:
     name: Frontend (React)
-    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -114,9 +118,13 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
+        timeout-minutes: 10
       - run: bunx tsc --noEmit
+        timeout-minutes: 5
       - run: bun run test
+        timeout-minutes: 10
       - run: bun run build
+        timeout-minutes: 5
 
       # BLOCKING at high/critical only, and it starts green (0 vulnerabilities
       # on 2026-08-11 at every level).
@@ -131,8 +139,10 @@ jobs:
       # which takes bun's fix where one exists and fails where none does.
       - name: Dependency CVEs (bun, high+)
         if: github.event_name == 'push' || github.event_name == 'pull_request'
+        timeout-minutes: 5
         run: bun audit --audit-level=high
       - name: Dependency advisories (all levels, advisory)
+        timeout-minutes: 5
         run: bun audit || true
 
       # Folded in here rather than given its own job: it is a two-second
@@ -165,7 +175,6 @@ jobs:
   # dashboard. playwright.config.ts starts both servers on a new database.
   e2e:
     name: Browser smoke test
-    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -179,14 +188,21 @@ jobs:
         with:
           bun-version: 1.4.3
       - uses: ./.github/actions/caddy
+        timeout-minutes: 15
       - run: bun install --frozen-lockfile
+        timeout-minutes: 10
       - run: bunx playwright install --with-deps chromium
+        timeout-minutes: 15
       # Built first so the config's `dotnet run` starts well inside its timeout.
       - run: dotnet build server/src/SslReverseProxy.Api
+        timeout-minutes: 10
       - run: bun run e2e
+        timeout-minutes: 20
         env:
           SSLRP_REQUIRE_CADDY: '1'
-      - if: failure()
+      # upload-artifact v4 refuses any server but github.com and GitHub fails a job that names v3,
+      # so a forge failure's report stays in the step log.
+      - if: failure() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
@@ -197,44 +213,50 @@ jobs:
   # and the API answers the compose healthcheck's own command inside the container.
   image:
     name: Container image
-    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        timeout-minutes: 30
         with:
           context: server
           load: true
           tags: sslreverseproxy:ci
           cache-from: type=gha,scope=image
           cache-to: type=gha,mode=max,scope=image
+      # The forge's jobs share the runner host's Docker daemon: the container gets this run's name
+      # and is removed on every exit.
       - name: Caddy modules present, healthcheck answers
+        timeout-minutes: 5
         run: |
           set -euo pipefail
+          name="sslrp-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
+          trap 'docker rm -f "$name" > /dev/null 2>&1 || true' EXIT
           modules=$(docker run --rm --entrypoint caddy sslreverseproxy:ci list-modules)
           grep -qx 'http.handlers.rate_limit' <<< "$modules"
           grep -qx 'dns.providers.cloudflare' <<< "$modules"
-          docker run -d --name sslrp -e Security__ApiKeyPepper="$(openssl rand -base64 32)" sslreverseproxy:ci
+          docker run -d --name "$name" -e Security__ApiKeyPepper="$(openssl rand -base64 32)" sslreverseproxy:ci
           for _ in $(seq 1 60); do
-            [ "$(docker inspect -f '{{.State.Running}}' sslrp)" = true ] || break
-            if docker exec sslrp curl -fsS http://localhost:8080/api/health; then
-              docker exec sslrp test -f /data/sslrp.db
+            [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || break
+            if docker exec "$name" curl -fsS http://localhost:8080/api/health; then
+              docker exec "$name" test -f /data/sslrp.db
               exit 0
             fi
             sleep 1
           done
-          docker logs sslrp
+          docker logs "$name"
           exit 1
 
   # The high+ gate for scheduled and manual runs, on the npm registry's advisories
   # (the job name keeps "npm" for that, and so that nothing matching on it breaks).
   # A new advisory that bun can fix within the declared ranges is fixed and
   # committed here, so it never reaches the inbox as a failure; one it cannot fix
-  # (no patched release in range) still fails the run.
+  # (no patched release in range) still fails the run. It runs on the forge only:
+  # the fix is a commit to main, and GitHub's copy is a mirror of the forge's.
   audit-heal:
     name: Dependency CVEs (npm, high+, self-fixing)
-    if: github.server_url == 'https://github.com' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: github.server_url != 'https://github.com' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -249,7 +271,9 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
+        timeout-minutes: 10
       - name: Audit, and commit bun's fix when it clears the gate
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           if bun audit --audit-level=high; then exit 0; fi
@@ -267,8 +291,8 @@ jobs:
           bunx tsc --noEmit
           bun run test
           bun run build
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "gitea-actions"
+          git config user.email "teabot@gitea.io"
           git commit -qam "Take bun's audit fix for ${ids:-the high advisories}"
           git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
           echo "::notice::committed bun's audit fix for ${ids:-the high advisories} to ${GITHUB_REF_NAME}"
