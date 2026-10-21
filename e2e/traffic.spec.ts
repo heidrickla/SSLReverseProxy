@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { caddyPath } from '../playwright.config';
-import { controlPlane, proxyGet, sendDemoTraffic, signIn } from './session';
+import { controlPlane, openView, proxyGet, sendDemoTraffic, signIn } from './session';
 
 // CI sets SSLRP_REQUIRE_CADDY=1, so a missing binary fails these instead of skipping them.
 test.skip(!caddyPath && process.env.SSLRP_REQUIRE_CADDY !== '1', 'set SSLRP_TEST_CADDY to run the proxy');
@@ -71,6 +71,40 @@ test.describe.serial('the running proxy', () => {
     expect((await proxyGet('paths.example.com', '/raw/api/health')).status).toBe(401);
     expect((await proxyGet('paths.example.com', '/svcx/api/health')).status).toBe(502);
     expect((await proxyGet('paths.example.com', '/api/health')).status).toBe(502);
+  });
+
+  test("a rule's recent requests show what its route served, without the query", async ({ page }) => {
+    const server = await (await api.post('/api/servers', { data: { name: 'Requests', host: '192.0.2.43', os: 'linux' } })).json();
+    const rule = await (await api.post(`/api/servers/${server.id}/rules`, {
+      data: { domain: 'requests.example.com', upstreamUrl: 'http://127.0.0.1:5195', enableTls: false, enabled: true },
+    })).json();
+    const reloaded = await (await api.post('/api/proxy/reload')).json();
+    expect(reloaded.state, reloaded.message ?? '').toBe('Running');
+
+    expect((await proxyGet('requests.example.com', '/api/health?token=e2e-query-secret')).status).toBe(200);
+    expect((await proxyGet('requests.example.com', '/missing')).status).toBe(401);
+    // Another rule's request is not this rule's.
+    expect((await proxyGet('status.example.com', '/api/health')).status).toBe(200);
+
+    const url = `/api/servers/${server.id}/rules/${rule.id}/requests`;
+    await expect.poll(async () => (await (await api.get(url)).json()).requests
+      .map((r: { method: string; host: string; path: string; status: number; clientIp: string }) => `${r.method} ${r.host}${r.path} ${r.status} ${r.clientIp}`),
+    { timeout: 10_000 }).toEqual(['GET requests.example.com/missing 401 127.0.0.1', 'GET requests.example.com/api/health 200 127.0.0.1']);
+    expect(await (await api.get(url)).text()).not.toContain('e2e-query-secret');
+
+    await signIn(page, 'dark');
+    await page.goto('/');
+    await openView(page, 'Servers', 'Servers');
+    await page.locator('tbody tr', { hasText: 'Requests' }).click();
+    await page.getByRole('button', { name: 'Requests to requests.example.com', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Requests to requests.example.com' });
+    const rows = dialog.getByRole('table', { name: 'Recent requests' }).locator('tbody tr');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first()).toContainText('/missing');
+    await dialog.getByRole('radio', { name: '2xx' }).click();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText('/api/health');
+    await expect(rows.first()).toContainText('200');
   });
 });
 

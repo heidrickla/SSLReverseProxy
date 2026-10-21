@@ -192,6 +192,14 @@ export interface BackupImportResult { added: number; updated: number; removed: n
 /** Caddy's running config against the next push. The digest goes back with Reload or rollback. */
 export interface ProxyPreview { runningAvailable: boolean; message: string | null; changes: ConfigChange[]; truncated: boolean; digest: string; }
 export interface UpstreamHealth { reachable: boolean; statusCode: number | null; latencyMs: number | null; error: string | null; }
+
+export interface RecentRequest {
+  seq: number; at: string; method: string; host: string; path: string; status: number;
+  durationMs: number; size: number; clientIp: string | null;
+}
+/** Newest first. `next` pages older; `message` says why a rule's requests are not recorded. */
+export interface RecentRequests { requests: RecentRequest[]; next: number | null; message: string | null; }
+export interface RecentRequestsQuery { take?: number; status?: string; before?: number; }
 export interface CertStatus { id: string; domain: string; status: string; daysRemaining: number | null; expiresAt: string | null; }
 export type ChallengeName = 'Http' | 'DnsCloudflare';
 /** A certificate row. `status` is derived from the served certificate's dates when the list is read. */
@@ -270,6 +278,14 @@ export const api = {
           version === undefined ? undefined : ifMatch(version)),
       health: (serverId: string, ruleId: string) =>
         request<UpstreamHealth>('GET', `/api/servers/${serverId}/rules/${ruleId}/health`),
+      requests: (serverId: string, ruleId: string, query: RecentRequestsQuery = {}) => {
+        const q = new URLSearchParams();
+        if (query.take !== undefined) q.set('take', String(query.take));
+        if (query.status) q.set('status', query.status);
+        if (query.before !== undefined) q.set('before', String(query.before));
+        const qs = q.toString();
+        return request<RecentRequests>('GET', `/api/servers/${serverId}/rules/${ruleId}/requests${qs ? `?${qs}` : ''}`);
+      },
       remove: (serverId: string, ruleId: string, version?: number) =>
         request<void>('DELETE', `/api/servers/${serverId}/rules/${ruleId}`, undefined,
           version === undefined ? undefined : ifMatch(version)),

@@ -24,6 +24,7 @@ public enum Permission
     ProxyReload,    // preview, validate and reload the config built from the rules
     CertRenew,      // force a certificate renewal
     BackupManage,   // export and import servers, rules and certificate definitions
+    RecentRequestsRead, // a rule's recent requests: paths and client addresses
 }
 
 /// <summary>Lifecycle state of the managed reverse-proxy process.</summary>

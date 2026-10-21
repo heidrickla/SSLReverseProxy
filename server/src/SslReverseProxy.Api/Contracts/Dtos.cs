@@ -119,6 +119,13 @@ public sealed record StatusClassesDto(long Success, long Redirect, long ClientEr
 public sealed record HourlyRequestsDto(DateTimeOffset Start, long Requests);
 public sealed record SnapshotDto(long Id, DateTimeOffset CreatedAt, string Actor, int RuleCount, string? Note);
 public sealed record UpstreamHealthDto(bool Reachable, int? StatusCode, long? LatencyMs, string? Error);
+
+/// <summary>One request a rule served. <c>Seq</c> is the cursor for <c>before</c>.</summary>
+public sealed record RecentRequestDto(
+    long Seq, DateTimeOffset At, string Method, string Host, string Path, int Status, double DurationMs, long Size, string? ClientIp);
+
+/// <summary>A page of a rule's requests, newest first. <c>Next</c> pages older; <c>Message</c> says why none are recorded.</summary>
+public sealed record RecentRequestsDto(IReadOnlyList<RecentRequestDto> Requests, long? Next, string? Message);
 public sealed record CertStatusDto(Guid Id, string Domain, string Status, int? DaysRemaining, DateTimeOffset? ExpiresAt);
 public sealed record ReadyDto(bool Ready, bool Database, string ProxyState);
 /// <summary>A certificate row. Status is derived from the served certificate's dates at read time.</summary>

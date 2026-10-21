@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using SslReverseProxy.Api.Auth;
 using SslReverseProxy.Api.Contracts;
 using SslReverseProxy.Core.Abstractions;
@@ -192,6 +193,29 @@ public static class ServerEndpoints
             var h = await checker.CheckAsync(rule.UpstreamUrl, ct);
             return Results.Ok(new UpstreamHealthDto(h.Reachable, h.StatusCode, h.LatencyMs, h.Error));
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ServerRead));
+
+        servers.MapGet("/{serverId:guid}/rules/{ruleId:guid}/requests", async (
+            Guid serverId, Guid ruleId, int? take, string? status, long? before, AppDbContext db, RecentRequests recent,
+            IOptions<ProxyOptions> options, CancellationToken ct) =>
+        {
+            var rule = await db.Rules.AsNoTracking().FirstOrDefaultAsync(r => r.Id == ruleId && r.ServerId == serverId, ct);
+            if (rule is null) return Results.NotFound();
+            var errors = new Dictionary<string, string[]>();
+            var count = take ?? RecentRequestsQuery.Take;
+            if (count is < 1 or > RecentRequestsQuery.MaxTake) errors["take"] = [$"Must be 1 to {RecentRequestsQuery.MaxTake}."];
+            if (!RecentRequestsQuery.TryStatus(status, out var matches)) errors["status"] = ["Must be 1xx to 5xx or a status code such as 404."];
+            if (before is < 1) errors["before"] = ["Must be positive."];
+            if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+            var (found, next) = recent.Query(ruleId, count, matches, before);
+            string? message = null;
+            if (!options.Value.RecentRequests) message = "Recent requests are off (Proxy:RecentRequests).";
+            else if (await db.Rules.AsNoTracking().AnyAsync(r => r.Enabled && r.SkipAccessLog && r.Domain == rule.Domain, ct))
+                message = "This host skips the access log, so its requests are not recorded.";
+            return Results.Ok(new RecentRequestsDto(
+                found.Select(e => new RecentRequestDto(e.Seq, e.At, e.Method, e.Host, e.Path, e.Status, Math.Round(e.DurationMs, 2), e.Size, e.ClientIp)).ToList(),
+                next, message));
+        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.RecentRequestsRead));
 
         servers.MapDelete("/{serverId:guid}/rules/{ruleId:guid}", async (
             Guid serverId, Guid ruleId, AppDbContext db, ProxyChanges changes, IAuditLog audit, ICurrentPrincipal me,

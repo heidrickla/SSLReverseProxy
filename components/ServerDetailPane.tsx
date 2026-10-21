@@ -6,6 +6,8 @@ import XIcon from './icons/XIcon';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import ProxyRuleModal, { ProxyRuleFormData } from './ProxyRuleModal';
 import ConfirmationModal from './ConfirmationModal';
+import Modal from './Modal';
+import RecentRequests from './RecentRequests';
 import ServerStatusBadge, { describeServerStatus } from './ServerStatusBadge';
 import { useAuth } from '../contexts/AuthContext';
 import { api, Rule, RuleInput } from '../services/apiClient';
@@ -21,6 +23,8 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
   const { hasPermission } = useAuth();
   const canManageRules = hasPermission('RuleWrite');
   const canDelete = hasPermission('ServerWrite');
+  const canReadRequests = hasPermission('RecentRequestsRead');
+  const [requestsFor, setRequestsFor] = useState<Rule | null>(null);
   const rulesScrollRef = useHorizontalScroll();
   const [modalState, setModalState] = useState<{
     isOpen: boolean;
@@ -129,7 +133,13 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
                                 </p>
                                 <p className="mt-0.5 text-xs text-on-surface-muted">to {rule.upstreamUrl}</p>
                            </div>
-                           <div onClick={e => e.stopPropagation()}>
+                           <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
+                             {canReadRequests && (
+                               <button type="button" onClick={() => setRequestsFor(rule)} aria-label={`Requests to ${rule.domain}${rule.routing?.pathPrefix ?? ''}`}
+                                 className="rounded-lg border border-border px-2 py-1 text-xs text-on-surface-muted hover:border-primary/40 hover:text-on-surface">
+                                 Requests
+                               </button>
+                             )}
                              <ToggleSwitch enabled={rule.enableTls} onChange={(enabled) => handleToggleSSL(rule, enabled)} label="SSL" disabled={!canManageRules} />
                            </div>
                         </div>
@@ -168,6 +178,10 @@ const ServerDetailPane: React.FC<ServerDetailPaneProps> = ({ server, onClose, on
             onDelete={modalState.rule ? () => handleDeleteRule(modalState.rule!.id) : undefined}
             initialRule={modalState.rule}
         />
+        <Modal isOpen={requestsFor !== null} onClose={() => setRequestsFor(null)} wide
+            title={requestsFor ? `Requests to ${requestsFor.domain}${requestsFor.routing?.pathPrefix ?? ''}` : ''}>
+            {requestsFor && <RecentRequests serverId={server.id} ruleId={requestsFor.id} />}
+        </Modal>
          <ConfirmationModal
             isOpen={isDeleteConfirmOpen}
             onClose={() => setIsDeleteConfirmOpen(false)}

@@ -15,8 +15,13 @@ public class ConfigDiffTests
 {
     private static readonly ProxyOptions Options = new();
 
+    // One id per route, as a row keeps across edits: each route's log_append names it.
     private static ProxyRule Rule(string domain, string upstream = "http://10.0.0.5", string? prefix = null) =>
-        new() { Domain = domain, UpstreamUrl = upstream, Enabled = true, EnableTls = true, PathPrefix = prefix };
+        new()
+        {
+            Id = new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(domain + prefix))),
+            Domain = domain, UpstreamUrl = upstream, Enabled = true, EnableTls = true, PathPrefix = prefix,
+        };
 
     private static string Config(params ProxyRule[] rules) =>
         CaddyConfigBuilder.Build(new ProxyPlan(rules, []), Options).ToJsonString();

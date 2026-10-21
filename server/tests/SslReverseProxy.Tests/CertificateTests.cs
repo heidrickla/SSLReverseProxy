@@ -1074,7 +1074,7 @@ public class CertificateCaddyValidationTests
     private static CaddyProxyController Controller(ProxyOptions options) => new(
         Microsoft.Extensions.Options.Options.Create(options), new NoHttp(), NullLogger<CaddyProxyController>.Instance,
         TimeProvider.System, new TrafficRecorder(), new SecretRedactor([options.CloudflareApiToken]),
-        new CaddyCertificateLog(SecretRedactor.None, TimeProvider.System));
+        new CaddyCertificateLog(SecretRedactor.None, TimeProvider.System), new RecentRequests(TimeProvider.System));
 
     [Fact]
     public async Task DnsWildcardAndForcedRenewal_AreAcceptedByCaddy()

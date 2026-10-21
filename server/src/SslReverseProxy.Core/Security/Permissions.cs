@@ -29,6 +29,7 @@ public static class Permissions
                 Permission.CertWrite,
                 Permission.CertRenew,
                 Permission.AuditRead,
+                Permission.RecentRequestsRead,
             },
             [Role.Admin] = new(Enum.GetValues<Permission>()), // all permissions
         };

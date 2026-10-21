@@ -51,6 +51,7 @@ public static class DependencyInjection
         services.AddSingleton<AlertSender>();
         services.AddSingleton<TrafficRecorder>();
         services.AddSingleton<CaddyCertificateLog>();
+        services.AddSingleton<RecentRequests>();
         services.AddSingleton<ICertificateProbe, TlsCertificateProbe>();
         services.AddSingleton<IProxyController, CaddyProxyController>();
         services.AddSingleton<ProxyChanges>();

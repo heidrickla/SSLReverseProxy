@@ -29,6 +29,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
     private readonly TrafficRecorder _traffic;
     private readonly SecretRedactor _redactor;
     private readonly CaddyCertificateLog _certificates;
+    private readonly RecentRequests _recent;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Process? _process;
@@ -42,7 +43,8 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         TimeProvider clock,
         TrafficRecorder traffic,
         SecretRedactor redactor,
-        CaddyCertificateLog certificates)
+        CaddyCertificateLog certificates,
+        RecentRequests recent)
     {
         _options = options.Value;
         _httpFactory = httpFactory;
@@ -51,6 +53,7 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         _traffic = traffic;
         _redactor = redactor;
         _certificates = certificates;
+        _recent = recent;
     }
 
     public async Task<ProxyStatus> GetStatusAsync(CancellationToken ct = default)
@@ -355,8 +358,14 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
 
     private void ForwardCaddyOutput(object? sender, DataReceivedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(e.Data)) return;
-        var line = e.Data;
+        if (!string.IsNullOrWhiteSpace(e.Data)) OnCaddyOutput(e.Data);
+    }
+
+    /// <summary>One line of Caddy's stdout or stderr.</summary>
+    public void OnCaddyOutput(string line)
+    {
+        // Access entries go to the recent-requests store only; they carry client addresses and paths.
+        if (_recent.Observe(line)) return;
         _certificates.Observe(line);
         var level = line.Contains("\"level\":\"error\"") || line.Contains("\"level\":\"fatal\"") || line.Contains("\"level\":\"panic\"")
             ? LogLevel.Error

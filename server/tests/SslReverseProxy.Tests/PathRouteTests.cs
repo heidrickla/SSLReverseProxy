@@ -105,8 +105,8 @@ public class PathRouteBuilderTests
         var handlers = Routes(CaddyConfigBuilder.Build(rules, _opts))[0]!["handle"]!.AsArray()
             .Select(h => h!["handler"]!.GetValue<string>()).ToArray();
 
-        Assert.Equal(["headers", "authentication", "rewrite", "reverse_proxy"], handlers);
-        var rewrite = Routes(CaddyConfigBuilder.Build(rules, _opts))[0]!["handle"]![2]!;
+        Assert.Equal(["headers", "log_append", "authentication", "rewrite", "reverse_proxy"], handlers);
+        var rewrite = Routes(CaddyConfigBuilder.Build(rules, _opts))[0]!["handle"]![3]!;
         Assert.Equal("/api", rewrite["strip_path_prefix"]!.GetValue<string>());
     }
 
@@ -143,7 +143,7 @@ public class PathRouteStructuralValidationTests
     private static CaddyProxyController Controller() => new(
         Options.Create(new ProxyOptions { CaddyPath = Path.Combine(Path.GetTempPath(), $"no-caddy-{Guid.NewGuid():N}.exe") }),
         new NoHttp(), NullLogger<CaddyProxyController>.Instance, TimeProvider.System, new TrafficRecorder(), SecretRedactor.None,
-        new CaddyCertificateLog(SecretRedactor.None, TimeProvider.System));
+        new CaddyCertificateLog(SecretRedactor.None, TimeProvider.System), new RecentRequests(TimeProvider.System));
 
     private static ProxyRule Rule(string domain, string? prefix, bool tls = true) =>
         new() { Domain = domain, UpstreamUrl = "http://10.0.0.2", Enabled = true, EnableTls = tls, PathPrefix = prefix };

@@ -15,7 +15,8 @@ export type Permission =
   | 'ApiKeyManage'
   | 'AuditRead'
   | 'AlertManage'
-  | 'BackupManage';
+  | 'BackupManage'
+  | 'RecentRequestsRead';
 
 export type PermissionGroup = 'Servers' | 'Proxy' | 'Certificates' | 'Administration';
 
@@ -23,6 +24,7 @@ export const PERMISSION_INFO: Record<Permission, { label: string; group: Permiss
   ServerRead: { label: 'Read servers, rules and traffic', group: 'Servers' },
   ServerWrite: { label: 'Add and delete servers', group: 'Servers' },
   RuleWrite: { label: 'Edit rules', group: 'Servers' },
+  RecentRequestsRead: { label: "Read rules' recent requests", group: 'Servers' },
   ProxyReload: { label: 'Preview, validate and reload', group: 'Proxy' },
   ProxyControl: { label: 'Start, stop and roll back', group: 'Proxy' },
   CertRead: { label: 'Read certificates', group: 'Certificates' },

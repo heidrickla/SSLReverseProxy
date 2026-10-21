@@ -125,6 +125,13 @@ public sealed class ProxyOptions
     public int AccessLogKeepDays { get; set; } = 14;
 
     /// <summary>
+    /// Keeps each rule's recent requests in memory (the RecentRequests store): time, method, host,
+    /// path without its query, status, duration, size and client IP, for 24 hours or 10,000 requests.
+    /// Caddy's encoder drops headers, the query and the Basic Auth user before the line leaves Caddy.
+    /// </summary>
+    public bool RecentRequests { get; set; } = true;
+
+    /// <summary>
     /// Seconds between background probes of every enabled rule's upstreams,
     /// which set each server's status. 0 turns the monitor off.
     /// </summary>

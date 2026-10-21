@@ -60,6 +60,7 @@ Caddy's config is built from the rules, certificate rows and renewal marks. `Pro
 | `Proxy:TlsMinVersion`, `Proxy:TlsCipherSuites` | Data-plane TLS floor: `tls1.2` or `tls1.3`; any other value is treated as `tls1.2`. A cipher name Caddy does not know fails the whole config load, so run `POST /api/proxy/validate` after changing the list. |
 | `Proxy:ReadHeaderTimeoutSeconds`, `Proxy:ReadTimeoutSeconds`, `Proxy:WriteTimeoutSeconds`, `Proxy:IdleTimeoutSeconds` | Data-plane timeouts; 0 keeps Caddy's default, which for read and write is none. |
 | `Proxy:AccessLogPath`, `AccessLogRollSizeMb`, `AccessLogKeepDays` | Data-plane access log as JSON lines. Off by default: records carry client IPs and URLs. |
+| `Proxy:RecentRequests` | Each rule's recent requests in memory, below. On by default. |
 | `Alerts:Targets` | Where alerts go: each has `Name`, `Kind` (`webhook` or `ntfy`), `Url`, optional `Token` and `Events` (empty sends every type). URL and token are secrets; set them through the environment (`Alerts__Targets__0__Url`). A target that fails validation is listed with the reason and not sent to. |
 | `Alerts:ServerDownChecks` | Consecutive `Error` readings before a server alerts as down (2). |
 | `Passkeys:RelyingPartyId` | The host the UI is served from, such as `proxy.example.com`. Empty turns passkey sign-in off. |
@@ -182,7 +183,7 @@ Rules take an optional `hardening` object. Omitted, nothing changes; sent, every
 | `enableSecurityHeaders` | On by default: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. |
 | `hstsMaxAgeDays`, `hstsIncludeSubdomains`, `frameOptions` | Opt-in. HSTS cannot be recalled once a browser has seen it and is suppressed on rules without TLS. `includeSubDomains` on an apex pins every sibling host to HTTPS for the max-age. |
 | `healthCheckPath`, `healthCheckIntervalSeconds`, `healthCheckTimeoutSeconds`, `healthCheckExpectStatus` | Caddy active health checks, taking an unhealthy upstream out of rotation. `expectStatus` takes a code or a class digit (`2` = any 2xx); unset, Caddy accepts 200-399. |
-| `skipAccessLog` | Keeps the host out of the access log. |
+| `skipAccessLog` | Keeps the host out of the access log and the recent requests. |
 
 `https://` upstreams: Caddy's `dial` is `host:port` and the transport decides TLS, so the generated config sets the TLS transport with verification on. On Caddy 2.11 and later the transport rewrites `Host` to the upstream's `host:port`.
 
@@ -191,6 +192,17 @@ Concurrent edits: each rule carries a `version`, returned in the body and as an 
 ```bash
 curl -X PUT .../rules/$ID -H 'If-Match: "3"' -H 'Content-Type: application/json' -d @rule.json
 ```
+
+Recent requests
+
+`GET .../rules/{id}/requests` (`RecentRequestsRead`): the rule's requests, newest first. Each route carries a `log_append` handler naming its rule, so Caddy's routing decides the rule, a rollback included. A second access log writes to Caddy's stderr through a filter encoder that deletes request headers, TLS details, the remote address and port, response headers and the Basic Auth user, and cuts the URI at `?` or `#`. The control plane reads those lines into memory and never logs them; a restart empties the store.
+
+| Kept | |
+| --- | --- |
+| Fields | `seq`, `at`, `method`, `host`, `path` (at most 512 characters), `status` (0 when nothing answered), `durationMs`, `size`, `clientIp` |
+| Store | The last 10,000 requests across all rules, at most 24 hours old |
+| Query | `take` 1 to 500 (50), `status` as a class (`4xx`) or a code (`404`), `before` a `seq` for older pages; `next` is the cursor while more remain |
+| `message` | Set when `Proxy:RecentRequests` is off or the host skips the access log |
 
 Certificates
 
@@ -308,6 +320,7 @@ Token `srp.<prefix>.<secret>`, sent as `X-Api-Key` or `Authorization: Bearer`. A
 | `ApiKeyManage` | API keys | Admin |
 | `AlertManage` | Alert targets and test alerts | Admin |
 | `BackupManage` | Export and import backups | Admin |
+| `RecentRequestsRead` | A rule's recent requests: paths and client IPs | Editor, Admin |
 
 A scoped key cannot manage passkeys: a passkey signs in with the whole role. The bootstrap key follows the admin role and does not expire.
 

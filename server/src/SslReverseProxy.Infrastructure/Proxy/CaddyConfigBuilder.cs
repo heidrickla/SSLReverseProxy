@@ -22,7 +22,8 @@ public static class CaddyConfigBuilder
     // Caddy's duration fields accept a Go duration string as well as an integer
     // count of nanoseconds. Strings keep the emitted config readable.
     private const string AccessLogName = "access";
-    private const string AccessLoggerId = "http.log.access." + AccessLogName;
+    private const string AccessLoggerId = RecentRequests.AccessLoggerPrefix + AccessLogName;
+    private const string RecentLogName = "recent";
 
     /// <summary>Server for TLS-enabled rules, on <see cref="ProxyOptions.HttpsPort"/>.</summary>
     public const string HttpsServer = "https";
@@ -66,6 +67,10 @@ public static class CaddyConfigBuilder
             // when a browser is most likely to be looking at an error page.
             if (BuildSecurityHeadersHandler(rule) is { } headers)
                 handle.Add(headers);
+
+            // Names the rule in its access log entries, before any handler that can answer.
+            if (AccessLogged(options))
+                handle.Add(new JsonObject { ["handler"] = "log_append", ["key"] = RecentRequests.RuleField, ["value"] = rule.Id.ToString() });
 
             // Per-route access control (evaluated before proxying). Deny wins.
             foreach (var acl in BuildAccessControlHandlers(rule))
@@ -211,7 +216,7 @@ public static class CaddyConfigBuilder
         AddIfPositive(srv, "write_timeout", options.WriteTimeoutSeconds);
         AddIfPositive(srv, "idle_timeout", options.IdleTimeoutSeconds);
 
-        if (!string.IsNullOrWhiteSpace(options.AccessLogPath))
+        if (AccessLogged(options))
         {
             var logs = new JsonObject { ["default_logger_name"] = AccessLogName };
             var skip = active.Where(r => r.SkipAccessLog).Select(r => r.Domain)
@@ -223,38 +228,62 @@ public static class CaddyConfigBuilder
         return srv;
     }
 
+    private static bool AccessLogged(ProxyOptions options) =>
+        options.RecentRequests || !string.IsNullOrWhiteSpace(options.AccessLogPath);
+
     /// <summary>
-    /// Routes the data-plane access log to its own file. The default logger is
-    /// told to exclude it as well, otherwise every request is written twice:
-    /// once to the access log and once to Caddy's own stderr log.
+    /// Routes the data-plane access log to its own file, and a filtered copy to stderr for
+    /// <see cref="RecentRequests"/>. The default logger excludes it, otherwise every request is
+    /// written again in Caddy's own stderr log.
     /// </summary>
     private static JsonObject? BuildLogging(ProxyOptions options)
     {
-        if (string.IsNullOrWhiteSpace(options.AccessLogPath)) return null;
+        if (!AccessLogged(options)) return null;
 
-        return new JsonObject
+        var logs = new JsonObject();
+        if (!string.IsNullOrWhiteSpace(options.AccessLogPath))
         {
-            ["logs"] = new JsonObject
+            logs[AccessLogName] = new JsonObject
             {
-                [AccessLogName] = new JsonObject
+                ["include"] = new JsonArray { AccessLoggerId },
+                ["writer"] = new JsonObject
                 {
-                    ["include"] = new JsonArray { AccessLoggerId },
-                    ["writer"] = new JsonObject
+                    ["output"] = "file",
+                    ["filename"] = options.AccessLogPath,
+                    ["roll_size_mb"] = Math.Max(1, options.AccessLogRollSizeMb),
+                    ["roll_keep_days"] = Math.Max(1, options.AccessLogKeepDays),
+                },
+                ["encoder"] = new JsonObject { ["format"] = "json" },
+                ["level"] = "INFO",
+            };
+        }
+        if (options.RecentRequests)
+        {
+            var drop = new JsonObject { ["filter"] = "delete" };
+            logs[RecentLogName] = new JsonObject
+            {
+                ["include"] = new JsonArray { AccessLoggerId },
+                ["writer"] = new JsonObject { ["output"] = "stderr" },
+                ["encoder"] = new JsonObject
+                {
+                    ["format"] = "filter",
+                    ["wrap"] = new JsonObject { ["format"] = "json" },
+                    ["fields"] = new JsonObject
                     {
-                        ["output"] = "file",
-                        ["filename"] = options.AccessLogPath,
-                        ["roll_size_mb"] = Math.Max(1, options.AccessLogRollSizeMb),
-                        ["roll_keep_days"] = Math.Max(1, options.AccessLogKeepDays),
+                        ["request>headers"] = drop.DeepClone(),
+                        ["request>tls"] = drop.DeepClone(),
+                        ["request>remote_ip"] = drop.DeepClone(),
+                        ["request>remote_port"] = drop.DeepClone(),
+                        ["resp_headers"] = drop.DeepClone(),
+                        ["user_id"] = drop.DeepClone(),
+                        ["request>uri"] = new JsonObject { ["filter"] = "regexp", ["regexp"] = "[?#].*$", ["value"] = "" },
                     },
-                    ["encoder"] = new JsonObject { ["format"] = "json" },
-                    ["level"] = "INFO",
                 },
-                ["default"] = new JsonObject
-                {
-                    ["exclude"] = new JsonArray { AccessLoggerId },
-                },
-            },
-        };
+                ["level"] = "INFO",
+            };
+        }
+        logs["default"] = new JsonObject { ["exclude"] = new JsonArray { AccessLoggerId } };
+        return new JsonObject { ["logs"] = logs };
     }
 
     /// <summary>

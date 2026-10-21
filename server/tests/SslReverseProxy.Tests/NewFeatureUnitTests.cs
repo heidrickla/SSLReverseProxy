@@ -176,7 +176,7 @@ public class CaddyHardeningTests
     {
         // remote_ip would match the load balancer's address, not the client's,
         // wherever this proxy sits behind another one.
-        var json = Build(Rule(r => r.AllowedCidrs = "203.0.113.0/24")).ToJsonString();
+        var json = Srv(Build(Rule(r => r.AllowedCidrs = "203.0.113.0/24")))["routes"]!.ToJsonString();
         Assert.Contains("client_ip", json);
         Assert.DoesNotContain("remote_ip", json);
     }
@@ -560,9 +560,10 @@ public class CaddyHardeningTests
     }
 
     [Fact]
-    public void AccessLog_AbsentWhenNoPathConfigured()
+    public void AccessLog_AbsentWhenNoPathConfigured_AndRecentRequestsAreOff()
     {
-        var cfg = Build(Rule());
+        var cfg = Build(Rule(), new ProxyOptions { RecentRequests = false });
+        Assert.DoesNotContain(Handlers(cfg), h => (string?)h!["handler"] == "log_append");
         Assert.Null(cfg["logging"]);
         Assert.Null(Srv(cfg)["logs"]);
     }
@@ -572,6 +573,56 @@ public class CaddyHardeningTests
     {
         var cfg = Build(Rule(r => r.SkipAccessLog = true), new ProxyOptions { AccessLogPath = "/tmp/a.log" });
         Assert.Equal("a.example.com", (string?)Srv(cfg)["logs"]!["skip_hosts"]![0]);
+    }
+
+    [Fact]
+    public void RecentRequests_TagEachRouteWithItsRule_BeforeAnyHandlerThatAnswers()
+    {
+        var rule = Rule(r => { r.DeniedCidrs = "192.0.2.0/24"; r.MaxRequestBodyBytes = 1024; });
+        var cfg = Build(rule);
+        var tag = Handler(cfg, "log_append");
+        Assert.Equal(RecentRequests.RuleField, (string?)tag["key"]);
+        Assert.Equal(rule.Id.ToString(), (string?)tag["value"]);
+        var names = Handlers(cfg).Select(h => (string?)h!["handler"]).ToList();
+        Assert.Equal(1, names.IndexOf("log_append"));
+        Assert.True(names.IndexOf("log_append") < names.IndexOf("subroute"));
+    }
+
+    [Fact]
+    public void RecentRequests_LogToStderr_WithoutHeadersQueryOrUser()
+    {
+        var cfg = Build(Rule());
+        Assert.Equal("access", (string?)Srv(cfg)["logs"]!["default_logger_name"]);
+        var logs = cfg["logging"]!["logs"]!;
+        Assert.Null(logs["access"]);
+        var recent = logs["recent"]!;
+        Assert.Equal("http.log.access.access", (string?)recent["include"]![0]);
+        Assert.Equal("stderr", (string?)recent["writer"]!["output"]);
+        Assert.Equal("filter", (string?)recent["encoder"]!["format"]);
+        Assert.Equal("json", (string?)recent["encoder"]!["wrap"]!["format"]);
+        var fields = recent["encoder"]!["fields"]!.AsObject();
+        foreach (var dropped in new[] { "request>headers", "request>tls", "request>remote_ip", "request>remote_port", "resp_headers", "user_id" })
+            Assert.Equal("delete", (string?)fields[dropped]!["filter"]);
+        Assert.Equal("regexp", (string?)fields["request>uri"]!["filter"]);
+        Assert.Equal("[?#].*$", (string?)fields["request>uri"]!["regexp"]);
+        Assert.Equal("", (string?)fields["request>uri"]!["value"]);
+        Assert.Equal("http.log.access.access", (string?)logs["default"]!["exclude"]![0]);
+    }
+
+    [Fact]
+    public void RecentRequests_SkipOptedOutHosts_WithoutAFileLog()
+    {
+        var cfg = Build(Rule(r => r.SkipAccessLog = true));
+        Assert.Equal("a.example.com", (string?)Srv(cfg)["logs"]!["skip_hosts"]![0]);
+    }
+
+    [Fact]
+    public void TheFileLog_AndRecentRequests_BothTakeTheAccessLogger()
+    {
+        var logs = Build(Rule(), new ProxyOptions { AccessLogPath = "/tmp/a.log" })["logging"]!["logs"]!;
+        Assert.Equal("file", (string?)logs["access"]!["writer"]!["output"]);
+        Assert.Equal("json", (string?)logs["access"]!["encoder"]!["format"]);
+        Assert.Equal("stderr", (string?)logs["recent"]!["writer"]!["output"]);
     }
 
     // --- Automatic HTTPS ---------------------------------------------------
