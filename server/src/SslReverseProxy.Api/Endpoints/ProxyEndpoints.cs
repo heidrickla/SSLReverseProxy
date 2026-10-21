@@ -207,13 +207,13 @@ public static class ProxyEndpoints
         detail: "Caddy's config or the rules changed after the preview. Preview again before applying.",
         statusCode: StatusCodes.Status409Conflict);
 
-    private static ProxyPreviewDto ToDto(ConfigPreview p) => new(
+    internal static ProxyPreviewDto ToDto(ConfigPreview p) => new(
         p.RunningAvailable,
         p.RunningAvailable ? null : "Caddy is not running or did not answer, so there is no running config to compare.",
         p.Changes.Select(c => new ConfigChangeDto(c.Group, c.Kind, c.Path, c.Before, c.After)).ToList(),
         p.Truncated,
         p.Digest);
 
-    private static ProxyStatusDto ToDto(ProxyStatus s) =>
+    internal static ProxyStatusDto ToDto(ProxyStatus s) =>
         new(s.State.ToString(), s.Engine, s.ProcessId, s.StartedAt, s.ActiveRuleCount, s.Message);
 }

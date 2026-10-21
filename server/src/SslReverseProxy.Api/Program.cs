@@ -179,6 +179,7 @@ app.MapProxyEndpoints();
 app.MapServerEndpoints();
 app.MapAdminEndpoints();
 app.MapCertificateEndpoints();
+app.MapBackupEndpoints();
 app.MapAlertEndpoints();
 app.MapPasskeyEndpoints();
 

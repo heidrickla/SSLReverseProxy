@@ -179,6 +179,16 @@ export interface Traffic {
 export interface Snapshot { id: number; createdAt: string; actor: string; ruleCount: number; note: string | null; }
 /** One difference; credential fields show as [masked]. Path is a JSON Pointer inside the group, empty for the whole group. */
 export interface ConfigChange { group: string; kind: 'added' | 'removed' | 'changed'; path: string; before: string | null; after: string | null; }
+export type BackupMode = 'merge' | 'replace';
+/** A Basic Auth hash shows as [masked]. Values are JSON. */
+export interface BackupField { field: string; before: string | null; after: string | null; }
+export interface BackupChange { kind: 'server' | 'rule' | 'certificate'; action: 'add' | 'update' | 'remove'; id: string; name: string; fields: BackupField[]; }
+/** Problems are keyed by document path; preview is null while there are any. The revision goes back with the import. */
+export interface BackupDryRun {
+  mode: BackupMode; changes: BackupChange[]; unchanged: number; problems: Record<string, string[]>;
+  revision: string; preview: ProxyPreview | null;
+}
+export interface BackupImportResult { added: number; updated: number; removed: number; unchanged: number; reloadNeeded: boolean; proxy: ProxyStatus | null; }
 /** Caddy's running config against the next push. The digest goes back with Reload or rollback. */
 export interface ProxyPreview { runningAvailable: boolean; message: string | null; changes: ConfigChange[]; truncated: boolean; digest: string; }
 export interface UpstreamHealth { reachable: boolean; statusCode: number | null; latencyMs: number | null; error: string | null; }
@@ -300,6 +310,14 @@ export const api = {
     register: (handle: string, name: string, response: unknown) =>
       request<Passkey>('POST', '/api/passkeys', { handle, name, response }),
     remove: (id: string) => request<void>('DELETE', `/api/passkeys/${id}`),
+  },
+
+  backup: {
+    export: () => request<unknown>('GET', '/api/backup'),
+    dryRun: (document: unknown, mode: BackupMode) =>
+      request<BackupDryRun>('POST', '/api/backup/import/dry-run', { document, mode }),
+    import: (document: unknown, mode: BackupMode, revision: string) =>
+      request<BackupImportResult>('POST', '/api/backup/import', { document, mode, revision }),
   },
 
   apiKeys: {

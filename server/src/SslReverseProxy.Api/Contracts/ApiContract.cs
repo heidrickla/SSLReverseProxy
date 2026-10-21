@@ -8,7 +8,7 @@ public static class ApiContract
 {
     public const int ApiVersion = 1;
 
-    public static readonly IReadOnlyList<string> Capabilities = ["scoped-api-keys", "push-preview"];
+    public static readonly IReadOnlyList<string> Capabilities = ["scoped-api-keys", "push-preview", "backup"];
 }
 
 public sealed record InstanceDto(Guid InstanceId, int ApiVersion, string[] Capabilities);

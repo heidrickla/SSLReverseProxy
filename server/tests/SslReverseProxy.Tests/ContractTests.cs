@@ -40,7 +40,7 @@ public class ContractTests : IDisposable
         Assert.Equal((string)first["instanceId"]!, (string)second["instanceId"]!);
         Assert.Equal(_factory.Db(db => db.Instance.Single().InstanceId).ToString(), (string)first["instanceId"]!);
         Assert.Equal(1, (int)first["apiVersion"]!);
-        Assert.Equal(["scoped-api-keys", "push-preview"], first["capabilities"]!.AsArray().Select(c => (string)c!));
+        Assert.Equal(["scoped-api-keys", "push-preview", "backup"], first["capabilities"]!.AsArray().Select(c => (string)c!));
     }
 
     [Fact]
@@ -67,6 +67,7 @@ public class ContractTests : IDisposable
         Assert.Contains("/api/apikeys/options", paths);
         Assert.Contains("/api/proxy/preview", paths);
         Assert.Contains("/api/proxy/snapshots/{id}/preview", paths);
+        Assert.Contains("/api/backup/import/dry-run", paths);
         Assert.DoesNotContain("/api/bootstrap-key", paths);
         var scheme = doc["components"]!["securitySchemes"]!["ApiKey"]!;
         Assert.Equal("apiKey", (string)scheme["type"]!);

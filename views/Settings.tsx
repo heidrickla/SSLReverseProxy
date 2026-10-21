@@ -5,6 +5,7 @@ import Button from '../components/Button';
 import ThemeEditor from '../components/ThemeEditor';
 import XIcon from '../components/icons/XIcon';
 import AlertsCard from '../components/AlertsCard';
+import BackupCard from '../components/BackupCard';
 import PasskeysCard from '../components/PasskeysCard';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -120,6 +121,8 @@ const Settings: React.FC = () => {
       {passkeysEnabled && !currentUser?.apiKey?.scopes && <PasskeysCard />}
 
       {hasPermission('AlertManage') && <AlertsCard />}
+
+      {hasPermission('BackupManage') && <BackupCard />}
 
       {isEditorOpen && <ThemeEditor onClose={() => setIsEditorOpen(false)} />}
     </div>

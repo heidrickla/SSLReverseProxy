@@ -288,6 +288,19 @@ public static class ServerEndpoints
         RuleHardeningRequest? hardening, RuleRoutingRequest? routing,
         string? existingAdditionalUpstreams, bool isCreate)
     {
+        var errors = RuleErrors(domain, upstream, validator, allowedCidrs, deniedCidrs, rateLimitPerMinute,
+            basicAuthUsername, basicAuthPassword, hardening, routing, existingAdditionalUpstreams, isCreate);
+        return errors.Count > 0 ? Results.ValidationProblem(errors) : null;
+    }
+
+    /// <summary>Every check a rule write runs on its fields, keyed by field. Backup import runs the same.</summary>
+    internal static Dictionary<string, string[]> RuleErrors(
+        string domain, string upstream, ProxyTargetValidator validator,
+        string? allowedCidrs, string? deniedCidrs,
+        int? rateLimitPerMinute, string? basicAuthUsername, string? basicAuthPassword,
+        RuleHardeningRequest? hardening, RuleRoutingRequest? routing,
+        string? existingAdditionalUpstreams, bool isCreate)
+    {
         var errors = new Dictionary<string, string[]>();
         var d = validator.ValidateDomain(domain);
         if (!d.Ok) errors["domain"] = [d.Reason!];
@@ -325,7 +338,7 @@ public static class ServerEndpoints
                 ["All upstreams for a rule must use the same scheme as the primary upstream."];
         }
 
-        return errors.Count > 0 ? Results.ValidationProblem(errors) : null;
+        return errors;
     }
 
     private static void ValidateRouting(RuleRoutingRequest? r, Dictionary<string, string[]> errors)
@@ -338,7 +351,7 @@ public static class ServerEndpoints
     }
 
     /// <summary>Null leaves the rule's routing as it is; a supplied block replaces both fields.</summary>
-    private static void ApplyRouting(ProxyRule rule, RuleRoutingRequest? r)
+    internal static void ApplyRouting(ProxyRule rule, RuleRoutingRequest? r)
     {
         if (r is null) return;
         RoutePath.TryNormalize(r.PathPrefix, out var prefix, out _);
@@ -480,7 +493,7 @@ public static class ServerEndpoints
     /// supplied block replaces every field, so a null inside it clears that
     /// setting — matching the replace semantics the rest of PUT already has.
     /// </summary>
-    private static void ApplyHardening(ProxyRule rule, RuleHardeningRequest? h)
+    internal static void ApplyHardening(ProxyRule rule, RuleHardeningRequest? h)
     {
         if (h is null) return;
 
@@ -518,7 +531,7 @@ public static class ServerEndpoints
     private static IEnumerable<string> SplitCsv(string csv) =>
         csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    private static string? NormalizeCsv(string? csv)
+    internal static string? NormalizeCsv(string? csv)
     {
         if (string.IsNullOrWhiteSpace(csv)) return null;
         var parts = SplitCsv(csv).ToArray();

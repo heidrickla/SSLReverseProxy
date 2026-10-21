@@ -14,7 +14,8 @@ export type Permission =
   | 'UserWrite'
   | 'ApiKeyManage'
   | 'AuditRead'
-  | 'AlertManage';
+  | 'AlertManage'
+  | 'BackupManage';
 
 export type PermissionGroup = 'Servers' | 'Proxy' | 'Certificates' | 'Administration';
 
@@ -31,6 +32,7 @@ export const PERMISSION_INFO: Record<Permission, { label: string; group: Permiss
   AlertManage: { label: 'List and test alert targets', group: 'Administration' },
   UserWrite: { label: 'Manage users', group: 'Administration' },
   ApiKeyManage: { label: 'Manage API keys', group: 'Administration' },
+  BackupManage: { label: 'Export and import backups', group: 'Administration' },
 };
 
 export const PERMISSION_GROUPS: PermissionGroup[] = ['Servers', 'Proxy', 'Certificates', 'Administration'];

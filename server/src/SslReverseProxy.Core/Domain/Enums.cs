@@ -23,6 +23,7 @@ public enum Permission
     AlertManage,    // list alert targets and send test alerts
     ProxyReload,    // preview, validate and reload the config built from the rules
     CertRenew,      // force a certificate renewal
+    BackupManage,   // export and import servers, rules and certificate definitions
 }
 
 /// <summary>Lifecycle state of the managed reverse-proxy process.</summary>

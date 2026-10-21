@@ -248,6 +248,26 @@ actions:
 
 Both need `AlertManage` (Admin).
 
+Backup
+
+A backup holds servers, their rules and certificate definitions, as `{formatVersion, exportedAt, servers, certificates}`. Each rule carries its Basic Auth bcrypt hash, so an import restores sign-ins without the passwords. Users, API keys, passkeys, the audit log, issued certificates and Caddy's storage are not in it. All endpoints need `BackupManage` (Admin).
+
+| Endpoint | |
+| --- | --- |
+| `GET /api/backup` | The backup as an attachment, `sslrp-backup-<yyyyMMdd-HHmmss>.json`. Audited. |
+| `POST /api/backup/import/dry-run` | `{document, mode}`: the import staged on the rows inside a change scope and kept nowhere. Returns `changes` (`kind`, `action`, `id`, `name`, `fields` with `before` and `after`), `unchanged`, `problems` by JSON path, `revision`, and `preview`, a push preview of the next Reload. |
+| `POST /api/backup/import` | `{document, mode, revision}` writes the import in one transaction and one change scope. Returns `added`, `updated`, `removed`, `unchanged`, `reloadNeeded` and, when certificates changed, the proxy status. Audited, and published as `backup.import`. |
+
+| Rule | |
+| --- | --- |
+| Mode | `merge` adds and updates what the file holds. `replace` also removes servers, rules and `Manual` certificates the file leaves out; `Rule` certificate rows stay. |
+| Matching | Servers by id, then name. Rules by id, then host and path prefix. Certificates by id, then domain. Two candidates is a problem; a certificate id held by another domain is a problem. |
+| Checks | Every rule check a create runs, route conflicts against the rows the import leaves, bcrypt hashes of cost 4 to 31, certificate challenges, and the Caddy config build. Any problem refuses the whole import. |
+| Revision | SHA-256 of the current rows, the mode and the file. The import refuses a revision that no longer matches with 409 `The dry run is out of date`, and 400 without one. |
+| Effect | Certificate changes push when Caddy runs, as a certificate write does. Rule changes take effect at the next Reload. |
+| Limits | 2 MiB (413), 500 servers, 5,000 rules, 2,000 certificates, format version 1. |
+| Display | A hash shows as `[masked]` in a dry run's fields. |
+
 Users, keys, audit
 
 - `GET/POST/PUT /api/users`: the last active admin cannot be demoted or deactivated.
@@ -287,6 +307,7 @@ Token `srp.<prefix>.<secret>`, sent as `X-Api-Key` or `Authorization: Bearer`. A
 | `UserWrite` | Users | Admin |
 | `ApiKeyManage` | API keys | Admin |
 | `AlertManage` | Alert targets and test alerts | Admin |
+| `BackupManage` | Export and import backups | Admin |
 
 A scoped key cannot manage passkeys: a passkey signs in with the whole role. The bootstrap key follows the admin role and does not expire.
 

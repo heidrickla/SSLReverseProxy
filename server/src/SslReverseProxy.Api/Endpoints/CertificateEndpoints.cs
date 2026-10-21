@@ -176,7 +176,7 @@ public static class CertificateEndpoints
         return app;
     }
 
-    private static bool TryChallenge(string? value, out CertificateChallenge challenge)
+    internal static bool TryChallenge(string? value, out CertificateChallenge challenge)
     {
         challenge = CertificateChallenge.Http;
         if (string.IsNullOrWhiteSpace(value)) return true;
@@ -186,7 +186,7 @@ public static class CertificateEndpoints
     }
 
     /// <summary>Why the name cannot be obtained with the challenge, or null when it can.</summary>
-    private static string? ChallengeProblem(string domain, CertificateChallenge challenge, ProxyOptions options)
+    internal static string? ChallengeProblem(string domain, CertificateChallenge challenge, ProxyOptions options)
     {
         var plan = new CertificatePlan(domain, challenge, Automate: true, RenewPending: false);
         if (CaddyConfigBuilder.ChallengeReady(plan, options)) return null;
@@ -196,13 +196,13 @@ public static class CertificateEndpoints
     }
 
     /// <summary>Applies the stored plan when the proxy runs. A stopped proxy picks it up when started.</summary>
-    private static async Task<ProxyStatus?> ApplyIfRunningAsync(AppDbContext db, ProxyChanges.Scope change, CancellationToken ct)
+    internal static async Task<ProxyStatus?> ApplyIfRunningAsync(AppDbContext db, ProxyChanges.Scope change, CancellationToken ct)
     {
         if ((await change.StatusAsync(ct)).State != ProxyState.Running) return null;
         return await change.ApplyAsync(await db.LoadProxyPlanAsync(ct), ct);
     }
 
-    private static string? ApplyNote(ProxyStatus? status) => status switch
+    internal static string? ApplyNote(ProxyStatus? status) => status switch
     {
         null => null,
         { State: ProxyState.Running } => null,
