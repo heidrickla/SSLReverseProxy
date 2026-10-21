@@ -6,6 +6,7 @@ using SslReverseProxy.Core.Abstractions;
 using SslReverseProxy.Core.Domain;
 using SslReverseProxy.Infrastructure.Persistence;
 using SslReverseProxy.Infrastructure.Proxy;
+using SslReverseProxy.Infrastructure.Security;
 
 namespace SslReverseProxy.Api.Endpoints;
 
@@ -56,6 +57,21 @@ public static class ProxyEndpoints
             }
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyReload));
 
+        // What a Reload would change: Caddy's running config against the config built from the rows.
+        group.MapGet("/preview", async (
+            IProxyController proxy, ProxyChanges changes, AppDbContext db, SecretRedactor redactor, CancellationToken ct) =>
+        {
+            using var change = await changes.EnterAsync(ct);
+            var plan = await db.LoadProxyPlanAsync(ct);
+            string next;
+            try { next = proxy.BuildConfigJson(plan); }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(title: "Config cannot be built", detail: ex.Message, statusCode: StatusCodes.Status409Conflict);
+            }
+            return Results.Ok(ToDto(ConfigDiff.Compare(await proxy.GetRunningConfigJsonAsync(ct), next, redactor)));
+        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyReload));
+
         // Dry-run: validate the current rule set without touching the live proxy.
         group.MapPost("/validate", async (IProxyController proxy, AppDbContext db, CancellationToken ct) =>
         {
@@ -94,11 +110,19 @@ public static class ProxyEndpoints
         }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
 
         group.MapPost("/reload", async (
-            IProxyController proxy, ProxyChanges changes, AppDbContext db, IAuditLog audit, IEventStream events,
+            ReloadRequest? req, IProxyController proxy, ProxyChanges changes, AppDbContext db, IAuditLog audit, IEventStream events,
             ICertificateChecks certificates, ICurrentPrincipal me, HttpContext ctx) =>
         {
             using var change = await changes.EnterAsync(ctx.RequestAborted);
             var plan = await db.LoadProxyPlanAsync(ctx.RequestAborted);
+            if (req?.PreviewDigest is { } digest)
+            {
+                string? next;
+                try { next = proxy.BuildConfigJson(plan); }
+                catch (InvalidOperationException) { next = null; }
+                if (next is null || ConfigDiff.Digest(await proxy.GetRunningConfigJsonAsync(ctx.RequestAborted), next) != digest)
+                    return StalePreview();
+            }
             var status = await change.ApplyAsync(plan, ctx.RequestAborted);
             if (status.State == ProxyState.Running)
             {
@@ -117,8 +141,18 @@ public static class ProxyEndpoints
                 .OrderByDescending(s => s.Id).Take(50).ToListAsync(ct)).Select(s => s.ToDto())))
             .RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
 
+        // What a rollback to this snapshot would change.
+        group.MapGet("/snapshots/{id:long}/preview", async (
+            long id, IProxyController proxy, ProxyChanges changes, AppDbContext db, SecretRedactor redactor, CancellationToken ct) =>
+        {
+            var snap = await db.ConfigSnapshots.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, ct);
+            if (snap is null) return Results.NotFound(new { message = "Snapshot not found." });
+            using var change = await changes.EnterAsync(ct);
+            return Results.Ok(ToDto(ConfigDiff.Compare(await proxy.GetRunningConfigJsonAsync(ct), snap.ConfigJson, redactor)));
+        }).RequireAuthorization(AuthorizationSetup.PolicyName(Permission.ProxyControl));
+
         group.MapPost("/rollback", async (
-            RollbackRequest req, ProxyChanges changes, AppDbContext db, IAuditLog audit,
+            RollbackRequest req, IProxyController proxy, ProxyChanges changes, AppDbContext db, IAuditLog audit,
             IEventStream events, ICurrentPrincipal me, HttpContext ctx) =>
         {
             var snap = await db.ConfigSnapshots.FindAsync([req.SnapshotId], ctx.RequestAborted);
@@ -126,6 +160,9 @@ public static class ProxyEndpoints
 
             // The push and the cleared marks land together, so no renewal or cleanup push falls between them.
             using var change = await changes.EnterAsync(ctx.RequestAborted);
+            if (req.PreviewDigest is { } digest
+                && ConfigDiff.Digest(await proxy.GetRunningConfigJsonAsync(ctx.RequestAborted), snap.ConfigJson) != digest)
+                return StalePreview();
             var status = await change.ApplyRawAsync(snap.ConfigJson, ctx.RequestAborted);
             var ok = status.State == ProxyState.Running;
             if (ok)
@@ -164,6 +201,18 @@ public static class ProxyEndpoints
         });
         await db.SaveChangesAsync(ct);
     }
+
+    private static IResult StalePreview() => Results.Problem(
+        title: "The preview is out of date",
+        detail: "Caddy's config or the rules changed after the preview. Preview again before applying.",
+        statusCode: StatusCodes.Status409Conflict);
+
+    private static ProxyPreviewDto ToDto(ConfigPreview p) => new(
+        p.RunningAvailable,
+        p.RunningAvailable ? null : "Caddy is not running or did not answer, so there is no running config to compare.",
+        p.Changes.Select(c => new ConfigChangeDto(c.Group, c.Kind, c.Path, c.Before, c.After)).ToList(),
+        p.Truncated,
+        p.Digest);
 
     private static ProxyStatusDto ToDto(ProxyStatus s) =>
         new(s.State.ToString(), s.Engine, s.ProcessId, s.StartedAt, s.ActiveRuleCount, s.Message);

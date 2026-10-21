@@ -140,6 +140,19 @@ Control service
 - `GET /api/proxy/metrics`: scraped runtime metrics.
 - `GET /api/proxy/traffic`: the last 24 hours from stored samples: requests, bytes in and out, status classes, average response time and time to first byte, median, P90 and P95 from Caddy's duration histogram, requests in flight at the latest sample, requests per hour. Answers from the database.
 - `GET /api/proxy/snapshots`, `POST /api/proxy/rollback`: config history and rollback. A rollback ends any renewal under way, and its config stands until a start, reload, Renew or certificate write pushes the rules again.
+- `GET /api/proxy/preview` (ProxyReload): Caddy's running config (`GET /config/` on its admin API) against the config the rows build, read in one change scope. `GET /api/proxy/snapshots/{id}/preview` (ProxyControl): the running config against a snapshot.
+
+| Preview field | Meaning |
+|---|---|
+| `runningAvailable`, `message` | False with a message when Caddy is stopped or its admin API does not answer; `changes` is then empty. |
+| `changes[]` | `group`, `kind` (`added`, `removed`, `changed`), `path`, `before`, `after`. |
+| `group` | A route as host and path prefix with its server (`app.example.com/api (https)`), a certificate policy by subject, or a config section. |
+| `path` | JSON Pointer inside the group; empty for the whole entry. Routes match by host and path, policies by subject, handlers by name, so an insertion is one change. |
+| `before`, `after` | Compact JSON, cut at 2,000 characters. Credential fields (`password`, `api_token`, `token`, `secret`, `client_secret`, `shared_secret`) show as `[masked]`; configured secret values as `[redacted]`. |
+| `truncated` | True past 500 changes. |
+| `digest` | SHA-256 of the two configs compared. |
+
+- `POST /api/proxy/reload` and `POST /api/proxy/rollback` take an optional `previewDigest`. When it no longer matches the running config and the config to push, the push is refused with 409 `The preview is out of date`. Without it they push as before.
 
 Servers and rules
 

@@ -63,7 +63,10 @@ public sealed record UpdateUserRequest(string Name, Role Role, bool IsActive);
 public sealed record CreateApiKeyRequest(Guid UserId, string Name, int? LifetimeDays, DateTimeOffset? ExpiresAt = null, string[]? Scopes = null);
 /// <summary>A body chooses the new key's lifetime and scopes as on create; no body keeps the old key's.</summary>
 public sealed record RotateApiKeyRequest(int? LifetimeDays, DateTimeOffset? ExpiresAt = null, string[]? Scopes = null);
-public sealed record RollbackRequest(long SnapshotId);
+/// <summary>PreviewDigest, when given, is the digest of the preview the caller saw; the push is refused if it no longer matches.</summary>
+public sealed record RollbackRequest(long SnapshotId, string? PreviewDigest = null);
+/// <summary>PreviewDigest as on rollback. No body pushes without the check.</summary>
+public sealed record ReloadRequest(string? PreviewDigest);
 
 // Responses
 /// <summary>Status is the background monitor's last verdict: Unknown, Active, Inactive or Error.</summary>
@@ -100,6 +103,10 @@ public sealed record RuleHardeningDto
 public sealed record RuleRoutingDto(string? PathPrefix, bool StripPathPrefix);
 public sealed record RuleDto(Guid Id, Guid ServerId, string Domain, string UpstreamUrl, bool EnableTls, bool Enabled, string? AllowedCidrs, string? DeniedCidrs, int? RateLimitPerMinute, bool BasicAuthEnabled, string? BasicAuthUsername, RuleHardeningDto Hardening, RuleRoutingDto Routing, int Version);
 public sealed record ProxyValidationDto(bool Valid, IReadOnlyList<string> Issues, bool EngineValidated);
+/// <summary>Kind is added, removed or changed. Credential fields show as [masked].</summary>
+public sealed record ConfigChangeDto(string Group, string Kind, string Path, string? Before, string? After);
+/// <summary>Caddy's running config against the next push. Digest goes back with Reload or rollback.</summary>
+public sealed record ProxyPreviewDto(bool RunningAvailable, string? Message, IReadOnlyList<ConfigChangeDto> Changes, bool Truncated, string Digest);
 public sealed record MetricsDto(DateTimeOffset CollectedAt, bool Available, long TotalRequests, long RequestsInFlight, IReadOnlyDictionary<string, double> Series, string? Message);
 
 /// <summary>Stored traffic for the last 24 hours. Times and averages are null when there is nothing to base them on.</summary>

@@ -920,11 +920,19 @@ internal sealed class FakeProxy : IProxyController
     public Task<ProxyStatus> StartAsync(CancellationToken ct = default) => Task.FromResult(Status());
     public Task<ProxyStatus> StopAsync(CancellationToken ct = default) => Task.FromResult(Status());
 
+    /// <summary>What Caddy holds: the last config it took. Null until one is taken, and unread while it is not running.</summary>
+    public volatile string? RunningConfig;
+
     public Task<ProxyStatus> ApplyConfigurationAsync(ProxyPlan plan, CancellationToken ct = default)
     {
         AppliedQueue.Enqueue(plan);
-        return Task.FromResult(RefuseConfig ? new ProxyStatus(ProxyState.Faulted, "fake", null, null, 0, "refused") : Status());
+        if (RefuseConfig) return Task.FromResult(new ProxyStatus(ProxyState.Faulted, "fake", null, null, 0, "refused"));
+        if (State == ProxyState.Running) RunningConfig = BuildConfigJson(plan);
+        return Task.FromResult(Status());
     }
+
+    public Task<string?> GetRunningConfigJsonAsync(CancellationToken ct = default) =>
+        Task.FromResult(State == ProxyState.Running ? RunningConfig : null);
 
     public string BuildConfigJson(ProxyPlan plan) => CaddyConfigBuilder.Build(plan, new ProxyOptions()).ToJsonString();
     public Task<ProxyValidationResult> ValidateConfigurationAsync(ProxyPlan plan, CancellationToken ct = default) =>
@@ -932,6 +940,7 @@ internal sealed class FakeProxy : IProxyController
     public Task<ProxyStatus> ApplyRawConfigAsync(string configJson, CancellationToken ct = default)
     {
         Interlocked.Increment(ref RawApplied);
+        if (State == ProxyState.Running) RunningConfig = configJson;
         return Task.FromResult(Status());
     }
     public Task<MetricsSnapshot> GetMetricsAsync(CancellationToken ct = default) =>

@@ -41,6 +41,9 @@ public interface IProxyController
     /// <summary>Validate a plan (structural checks always; engine validation when available).</summary>
     Task<ProxyValidationResult> ValidateConfigurationAsync(ProxyPlan plan, CancellationToken ct = default);
 
+    /// <summary>The config Caddy holds, from its admin API; null when it is not running or does not answer.</summary>
+    Task<string?> GetRunningConfigJsonAsync(CancellationToken ct = default);
+
     /// <summary>Push a previously captured config JSON verbatim (used for rollback).</summary>
     Task<ProxyStatus> ApplyRawConfigAsync(string configJson, CancellationToken ct = default);
 

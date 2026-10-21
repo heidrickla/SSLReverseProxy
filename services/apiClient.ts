@@ -177,6 +177,10 @@ export interface Traffic {
   hourly: { start: string; requests: number }[];
 }
 export interface Snapshot { id: number; createdAt: string; actor: string; ruleCount: number; note: string | null; }
+/** One difference; credential fields show as [masked]. Path is a JSON Pointer inside the group, empty for the whole group. */
+export interface ConfigChange { group: string; kind: 'added' | 'removed' | 'changed'; path: string; before: string | null; after: string | null; }
+/** Caddy's running config against the next push. The digest goes back with Reload or rollback. */
+export interface ProxyPreview { runningAvailable: boolean; message: string | null; changes: ConfigChange[]; truncated: boolean; digest: string; }
 export interface UpstreamHealth { reachable: boolean; statusCode: number | null; latencyMs: number | null; error: string | null; }
 export interface CertStatus { id: string; domain: string; status: string; daysRemaining: number | null; expiresAt: string | null; }
 export type ChallengeName = 'Http' | 'DnsCloudflare';
@@ -226,13 +230,17 @@ export const api = {
     status: () => request<ProxyStatus>('GET', '/api/proxy/status'),
     start: () => request<ProxyStatus>('POST', '/api/proxy/start'),
     stop: () => request<ProxyStatus>('POST', '/api/proxy/stop'),
-    reload: () => request<ProxyStatus>('POST', '/api/proxy/reload'),
+    reload: (previewDigest?: string) =>
+      request<ProxyStatus>('POST', '/api/proxy/reload', previewDigest ? { previewDigest } : undefined),
+    preview: () => request<ProxyPreview>('GET', '/api/proxy/preview'),
+    snapshotPreview: (id: number) => request<ProxyPreview>('GET', `/api/proxy/snapshots/${id}/preview`),
     validate: () => request<ProxyValidation>('POST', '/api/proxy/validate'),
     metrics: () => request<Metrics>('GET', '/api/proxy/metrics'),
     traffic: () => request<Traffic>('GET', '/api/proxy/traffic'),
     configPreview: () => request<string>('GET', '/api/proxy/config'),
     snapshots: () => request<Snapshot[]>('GET', '/api/proxy/snapshots'),
-    rollback: (snapshotId: number) => request<ProxyStatus>('POST', '/api/proxy/rollback', { snapshotId }),
+    rollback: (snapshotId: number, previewDigest?: string) =>
+      request<ProxyStatus>('POST', '/api/proxy/rollback', { snapshotId, previewDigest }),
   },
 
   servers: {

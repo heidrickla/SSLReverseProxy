@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Button from '../components/Button';
+import Modal from '../components/Modal';
+import PushPreview from '../components/PushPreview';
 import { useAuth } from '../contexts/AuthContext';
-import { api, ApiError, ProxyStatus, Metrics, ProxyValidation } from '../services/apiClient';
+import { api, ApiError, ProxyStatus, Metrics, ProxyValidation, Snapshot } from '../services/apiClient';
 
 const stateColor: Record<string, string> = {
     Running: 'bg-success/15 text-success',
@@ -21,17 +23,22 @@ const ProxyControl: React.FC = () => {
     const [validation, setValidation] = useState<ProxyValidation | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [snapshots, setSnapshots] = useState<Snapshot[] | null>(null);
+    const [push, setPush] = useState<{ kind: 'reload' } | { kind: 'rollback'; snapshot: Snapshot } | null>(null);
 
     const refresh = useCallback(async () => {
         setError(null);
         try {
-            const [s, m] = await Promise.all([api.proxy.status(), api.proxy.metrics()]);
+            const [s, m, h] = await Promise.all([
+                api.proxy.status(), api.proxy.metrics(), canControl ? api.proxy.snapshots() : Promise.resolve(null),
+            ]);
             setStatus(s);
             setMetrics(m);
+            setSnapshots(h);
         } catch (e) {
             setError(e instanceof ApiError ? `${e.status}: ${e.message}` : 'Failed to reach the API.');
         }
-    }, []);
+    }, [canControl]);
 
     useEffect(() => { refresh(); }, [refresh]);
 
@@ -90,7 +97,7 @@ const ProxyControl: React.FC = () => {
                         )}
                         {canReload && (
                             <>
-                                <Button variant="secondary" onClick={() => run('Reload', api.proxy.reload)} disabled={busy !== null}>Reload</Button>
+                                <Button variant="secondary" onClick={() => setPush({ kind: 'reload' })} disabled={busy !== null}>Reload</Button>
                                 <Button variant="secondary" onClick={() => run('Validate', api.proxy.validate)} disabled={busy !== null}>Validate</Button>
                             </>
                         )}
@@ -108,6 +115,52 @@ const ProxyControl: React.FC = () => {
                     <p className="text-xs text-on-surface-muted mt-1">
                         {validation.engineValidated ? 'Validated by the Caddy engine.' : 'Structural checks only (engine not available).'}
                     </p>
+                </div>
+            )}
+
+            {push && (
+                <Modal isOpen wide onClose={() => setPush(null)}
+                    title={push.kind === 'reload' ? 'Reload preview' : `Roll back to snapshot ${push.snapshot.id}`}>
+                    <PushPreview
+                        load={push.kind === 'reload' ? api.proxy.preview : () => api.proxy.snapshotPreview(push.snapshot.id)}
+                        apply={digest => push.kind === 'reload' ? api.proxy.reload(digest) : api.proxy.rollback(push.snapshot.id, digest)}
+                        applyLabel={push.kind === 'reload' ? 'Reload' : 'Roll back'}
+                        applyVariant={push.kind === 'reload' ? 'primary' : 'danger'}
+                        onCancel={() => setPush(null)}
+                        onApplied={() => { setPush(null); void refresh(); }}
+                    />
+                </Modal>
+            )}
+
+            {canControl && snapshots && (
+                <div className="card p-6">
+                    <h3 className="text-base font-semibold text-on-surface mb-4">Config history</h3>
+                    {snapshots.length === 0 ? (
+                        <p className="text-on-surface-muted text-sm">Each start and reload keeps the config it pushed here.</p>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="data-table" aria-label="Config history">
+                                <thead>
+                                    <tr><th>Snapshot</th><th>Taken</th><th>By</th><th>Event</th><th>Rules</th><th><span className="sr-only">Actions</span></th></tr>
+                                </thead>
+                                <tbody>
+                                    {snapshots.map(s => (
+                                        <tr key={s.id}>
+                                            <td className="tabular-nums text-on-surface">{s.id}</td>
+                                            <td className="tabular-nums text-on-surface-muted">{new Date(s.createdAt).toLocaleString()}</td>
+                                            <td className="text-on-surface-muted">{s.actor}</td>
+                                            <td className="text-on-surface-muted">{s.note ?? ''}</td>
+                                            <td className="tabular-nums text-on-surface-muted">{s.ruleCount}</td>
+                                            <td className="text-right">
+                                                <Button size="sm" variant="secondary" onClick={() => setPush({ kind: 'rollback', snapshot: s })}
+                                                    disabled={busy !== null} aria-label={`Roll back to snapshot ${s.id}`}>Roll back</Button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             )}
 

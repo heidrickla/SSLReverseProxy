@@ -260,6 +260,25 @@ public sealed class CaddyProxyController : IProxyController, IDisposable
         finally { _gate.Release(); }
     }
 
+    public async Task<string?> GetRunningConfigJsonAsync(CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            if (_process is null || _process.HasExited) return null;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(AdminRequestTimeout);
+            using var response = await AdminClient().GetAsync("/config/", timeout.Token);
+            return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(timeout.Token) : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+        {
+            _logger.LogWarning(ex, "Could not read Caddy's running config.");
+            return null;
+        }
+        finally { _gate.Release(); }
+    }
+
     public async Task<MetricsSnapshot> GetMetricsAsync(CancellationToken ct = default)
     {
         var now = _clock.GetUtcNow();
