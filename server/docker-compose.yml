@@ -1,7 +1,7 @@
 # Runs the control-plane API (which manages Caddy as a child process) with a
-# persisted data volume. In production, terminate TLS for the control API at your
-# own edge or enable mutual TLS; the ports below expose the proxy (80/443) and the
-# control API (8080).
+# persisted data volume. The proxy (80/443) is published on every interface and the
+# control API (8080, plain HTTP) on the host's loopback only; serve it further through
+# your own TLS or mutual-TLS edge.
 
 services:
   controlplane:
@@ -12,7 +12,7 @@ services:
     ports:
       - "80:80"     # proxy HTTP (ACME challenges)
       - "443:443"   # proxy HTTPS
-      - "8080:8080" # control API — put this behind your own auth/mTLS edge
+      - "127.0.0.1:8080:8080" # control API, loopback only: publish it through your own TLS or mTLS edge
     environment:
       # Provide the pepper and any secrets via the host environment or a secrets
       # manager — do not bake them into the image.
