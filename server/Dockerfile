@@ -27,16 +27,19 @@ RUN dotnet publish src/SslReverseProxy.Api/SslReverseProxy.Api.csproj -c Release
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# For the compose healthcheck; the .NET runtime images ship without it.
+# curl for the compose healthcheck (the .NET runtime images ship without it); setcap for Caddy's ports.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
+# The API and Caddy run as the image's app user; Caddy binds 80 and 443 through this capability.
+RUN setcap cap_net_bind_service=+ep /usr/bin/caddy
 
 COPY --from=build /app .
 
-# Persisted data (SQLite DB + generated proxy config + Caddy's cert store).
+# Persisted data (SQLite DB + generated proxy config + Caddy's cert store), owned by the app user.
+RUN mkdir -p /data && chown "$APP_UID" /data
 VOLUME /data
 ENV ASPNETCORE_ENVIRONMENT=Production \
     ASPNETCORE_URLS=http://+:8080 \
@@ -46,5 +49,7 @@ ENV ASPNETCORE_ENVIRONMENT=Production \
 
 # 8080 = control API; 80/443 = the proxy (Caddy, started by the API).
 EXPOSE 8080 80 443
+
+USER $APP_UID
 
 ENTRYPOINT ["dotnet", "SslReverseProxy.Api.dll"]

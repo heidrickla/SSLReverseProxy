@@ -209,7 +209,7 @@ jobs:
           path: playwright-report
           retention-days: 7
 
-  # server/Dockerfile built as shipped: its Caddy carries both modules,
+  # server/Dockerfile built as shipped: its Caddy carries both modules, it runs unprivileged,
   # and the API answers the compose healthcheck's own command inside the container.
   image:
     name: Container image
@@ -237,6 +237,11 @@ jobs:
           modules=$(docker run --rm --entrypoint caddy sslreverseproxy:ci list-modules)
           grep -qx 'http.handlers.rate_limit' <<< "$modules"
           grep -qx 'dns.providers.cloudflare' <<< "$modules"
+          # The image runs unprivileged, and its Caddy binds a port below 1024 by its file capability alone.
+          [ "$(docker run --rm --entrypoint id sslreverseproxy:ci -u)" != 0 ]
+          bound=0
+          docker run --rm --sysctl net.ipv4.ip_unprivileged_port_start=1024 --entrypoint timeout sslreverseproxy:ci 5 caddy respond --listen :80 ok || bound=$?
+          [ "$bound" = 124 ]
           docker run -d --name "$name" -e Security__ApiKeyPepper="$(openssl rand -base64 32)" sslreverseproxy:ci
           for _ in $(seq 1 60); do
             [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || break
