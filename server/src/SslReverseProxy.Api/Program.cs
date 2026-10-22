@@ -151,12 +151,15 @@ builder.Services.AddOpenApi(o => o.AddDocumentTransformer(OpenApiDescription.Des
 
 var app = builder.Build();
 
-// Fail loudly in production if secret material is missing.
-if (app.Environment.IsProduction() && string.IsNullOrEmpty(securityOptions.ApiKeyPepper))
+// Production does not start without a usable pepper: keys hashed without one are only salted.
+if (app.Environment.IsProduction())
 {
-    app.Logger.LogWarning(
-        "Security:ApiKeyPepper is not set. Configure a random pepper via user-secrets or environment " +
-        "before exposing this service in production.");
+    if (SecurityOptions.PepperRefusal(securityOptions.ApiKeyPepper) is { } refusal)
+        throw new InvalidOperationException(refusal);
+    if (SecurityOptions.PepperIsShort(securityOptions.ApiKeyPepper!))
+        app.Logger.LogWarning(
+            "Security:ApiKeyPepper is shorter than {Bytes} bytes. A new pepper invalidates every API key, so rotate it with the keys.",
+            SecurityOptions.PepperBytes);
 }
 
 app.UseForwardedHeaders();

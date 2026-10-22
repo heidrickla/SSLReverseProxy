@@ -195,6 +195,7 @@ public class ServerHealthTests
                 cfg.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:AppDb"] = $"Data Source={_dbPath}",
+                    ["Security:ApiKeyPepper"] = Convert.ToBase64String(new byte[32]),
                     ["Seed:Demo"] = seedDemo ? "true" : "false",
                     ["Seed:DemoUpstreamBase"] = "http://127.0.0.1:5195",
                     ["Proxy:ServerHealthIntervalSeconds"] = intervalSeconds.ToString(),

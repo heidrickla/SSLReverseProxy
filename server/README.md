@@ -350,7 +350,7 @@ Only a principal holding its whole role manages passkeys, since a passkey signs 
 
 ## Deployment
 
-- Secrets: `Security__ApiKeyPepper` (random, base64) through the environment or user-secrets; Production logs a warning when it is unset. ACME email and client-certificate thumbprints the same way.
+- Secrets: `Security__ApiKeyPepper` (random, base64) through the environment or user-secrets; Production refuses to start when it is unset or not base64, and logs a warning when it is under 32 bytes. ACME email and client-certificate thumbprints the same way.
 - TLS: HSTS and HTTPS redirect are on in Production. Terminate TLS (or mTLS) for the control API at the edge, and put it behind an authenticating gateway or set `Security:RequireMutualTls`.
 - Behind a proxy: list it in `Security:TrustedProxies` (IP or CIDR) so the rate limiter and audit log see the client IP from `X-Forwarded-For`.
 - Containers: the [`Dockerfile`](Dockerfile) bundles the API with Caddy and its plugins; the API runs Caddy as a child process. The database, proxy config and Caddy's certificates live in `/data`, a volume in [`docker-compose.yml`](docker-compose.yml). Environment: `SSLRP_API_KEY_PEPPER`, optional `SSLRP_ACME_EMAIL`, `SSLRP_CLOUDFLARE_API_TOKEN`, `SSLRP_SPA_ORIGIN`, and `SSLRP_PASSKEY_RP_ID` with `SSLRP_PASSKEY_ORIGIN` for passkey sign-in. Alert targets go in the service's environment as `Alerts__Targets__<n>__<Key>`.

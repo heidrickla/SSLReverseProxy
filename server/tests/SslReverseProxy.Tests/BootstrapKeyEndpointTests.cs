@@ -74,6 +74,7 @@ public class BootstrapKeyEndpointTests
                 cfg.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:AppDb"] = $"Data Source={_dbPath}",
+                    ["Security:ApiKeyPepper"] = Convert.ToBase64String(new byte[32]),
                 }));
             if (loopbackClient)
                 builder.ConfigureServices(s =>

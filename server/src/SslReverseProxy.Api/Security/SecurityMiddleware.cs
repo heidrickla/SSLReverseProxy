@@ -26,6 +26,28 @@ public sealed class SecurityOptions
 {
     public const string SectionName = "Security";
     public string? ApiKeyPepper { get; set; }
+
+    /// <summary>The length of a generated pepper (<c>openssl rand -base64 32</c>).</summary>
+    public const int PepperBytes = 32;
+
+    /// <summary>Why Production refuses to start with this pepper, or null when it can.</summary>
+    public static string? PepperRefusal(string? pepper)
+    {
+        if (string.IsNullOrWhiteSpace(pepper))
+            return "Security:ApiKeyPepper is not set. Set a random base64 pepper (openssl rand -base64 32) through the environment or user-secrets.";
+        try
+        {
+            Convert.FromBase64String(pepper);
+            return null;
+        }
+        catch (FormatException)
+        {
+            return "Security:ApiKeyPepper is not base64. Set a random base64 pepper (openssl rand -base64 32).";
+        }
+    }
+
+    /// <summary>True for a valid pepper shorter than <see cref="PepperBytes"/>; changing it invalidates every API key.</summary>
+    public static bool PepperIsShort(string pepper) => Convert.FromBase64String(pepper).Length < PepperBytes;
     public bool RequireMutualTls { get; set; }
     /// <summary>Allowed client-certificate thumbprints (SHA-256, hex) when mTLS is required.</summary>
     public string[] AllowedClientCertificateThumbprints { get; set; } = Array.Empty<string>();
