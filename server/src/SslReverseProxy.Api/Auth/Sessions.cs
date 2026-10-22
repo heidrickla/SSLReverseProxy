@@ -86,12 +86,15 @@ public static class SessionTokens
 }
 
 /// <summary>
-/// WebAuthn ceremony options waiting for the browser's answer, keyed by a random handle. Each is taken once,
-/// expires after two minutes, and the store holds at most <see cref="Capacity"/>.
+/// WebAuthn ceremony options waiting for the browser's answer, keyed by a random handle. Each is taken once
+/// and expires after two minutes. Anonymous sign-ins and signed-in registrations have separate limits, so
+/// sign-in traffic cannot crowd out a registration; a kind at its limit drops its oldest entry for the new one,
+/// so a flood of ceremonies delays a sign-in by a retry instead of refusing every one.
 /// </summary>
 public sealed class PasskeyChallenges(TimeProvider clock)
 {
-    public const int Capacity = 1000;
+    public const int SignInCapacity = 1000;
+    public const int RegisterCapacity = 100;
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(2);
 
     public enum Kind { Register, SignIn }
@@ -99,18 +102,27 @@ public sealed class PasskeyChallenges(TimeProvider clock)
     private sealed record Entry(Kind Kind, Guid? UserId, string OptionsJson, DateTimeOffset Expires);
 
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly Lock _adding = new();
 
-    /// <summary>Returns the handle, or null when the store is full.</summary>
-    public string? Add(Kind kind, Guid? userId, string optionsJson)
+    public static int CapacityOf(Kind kind) => kind == Kind.SignIn ? SignInCapacity : RegisterCapacity;
+
+    /// <summary>Stores the options and returns their handle.</summary>
+    public string Add(Kind kind, Guid? userId, string optionsJson)
     {
-        var now = clock.GetUtcNow();
-        foreach (var (key, entry) in _entries)
-            if (entry.Expires <= now) _entries.TryRemove(key, out _);
-        if (_entries.Count >= Capacity) return null;
+        lock (_adding)
+        {
+            var now = clock.GetUtcNow();
+            foreach (var (key, entry) in _entries)
+                if (entry.Expires <= now) _entries.TryRemove(key, out _);
 
-        var handle = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(24));
-        _entries[handle] = new Entry(kind, userId, optionsJson, now + Lifetime);
-        return handle;
+            var sameKind = _entries.Where(e => e.Value.Kind == kind).ToList();
+            foreach (var (key, _) in sameKind.OrderBy(e => e.Value.Expires).Take(sameKind.Count - CapacityOf(kind) + 1))
+                _entries.TryRemove(key, out _);
+
+            var handle = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(24));
+            _entries[handle] = new Entry(kind, userId, optionsJson, now + Lifetime);
+            return handle;
+        }
     }
 
     /// <summary>Removes the entry whatever it holds, and returns its options only when kind, user and time match.</summary>

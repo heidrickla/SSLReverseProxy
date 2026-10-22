@@ -39,9 +39,7 @@ public static class PasskeyEndpoints
                 UserVerification = UserVerificationRequirement.Required,
             });
             var json = options.ToJson();
-            return challenges.Add(PasskeyChallenges.Kind.SignIn, null, json) is { } handle
-                ? Ceremony(handle, json)
-                : Busy();
+            return Ceremony(challenges.Add(PasskeyChallenges.Kind.SignIn, null, json), json);
         }).AllowAnonymous().RequireRateLimiting(OptionsLimit);
 
         auth.MapPost("/passkey", async (
@@ -165,9 +163,7 @@ public static class PasskeyEndpoints
                 AttestationPreference = AttestationConveyancePreference.None,
             });
             var json = options.ToJson();
-            return challenges.Add(PasskeyChallenges.Kind.Register, user.Id, json) is { } handle
-                ? Ceremony(handle, json)
-                : Busy();
+            return Ceremony(challenges.Add(PasskeyChallenges.Kind.Register, user.Id, json), json);
         });
 
         passkeys.MapPost("/", async (
@@ -294,10 +290,6 @@ public static class PasskeyEndpoints
 
     private static IResult NotConfigured() =>
         Results.NotFound(new { message = "Passkeys are not configured (Passkeys:RelyingPartyId, Passkeys:Origins)." });
-
-    private static IResult Busy() =>
-        Results.Problem(title: "Too many passkey ceremonies are in progress; try again shortly.",
-            statusCode: StatusCodes.Status503ServiceUnavailable);
 
     private static async Task<IResult> SignInFailed(IAuditLog audit, HttpContext ctx, PasskeyCredential? cred, string reason)
     {
