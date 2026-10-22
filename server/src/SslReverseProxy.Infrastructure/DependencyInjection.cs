@@ -41,7 +41,8 @@ public static class DependencyInjection
         });
 
         services.AddHttpClient("caddy-admin", c => c.Timeout = CaddyProxyController.AdminRequestTimeout);
-        services.AddHttpClient("upstream-health");
+        services.AddHttpClient(UpstreamHealthChecker.ClientName)
+            .ConfigurePrimaryHttpMessageHandler(sp => GuardedConnect.Handler(sp.GetRequiredService<ProxyTargetValidator>()));
 
         services.Configure<AlertOptions>(config.GetSection(AlertOptions.SectionName));
         services.AddHttpClient(AlertSender.ClientName, c => c.Timeout = AlertSender.RequestTimeout)

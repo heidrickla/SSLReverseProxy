@@ -1,3 +1,4 @@
+using System.Net;
 using SslReverseProxy.Core.Security;
 using Xunit;
 
@@ -39,6 +40,74 @@ public class ProxyTargetValidatorTests
         var strict = new ProxyTargetValidator(new ProxyTargetPolicy { AllowPrivateNetworks = false });
         Assert.False(strict.ValidateUpstream("http://10.1.2.3:8080").Ok);
     }
+
+    private static ProxyTargetValidator Resolving(ProxyTargetPolicy policy, params string[] addresses) =>
+        new(policy, _ => addresses.Length == 0 ? null : addresses.Select(IPAddress.Parse).ToList());
+
+    private static readonly ProxyTargetPolicy NoLoopback = new() { AllowLoopback = false };
+
+    [Theory]
+    [InlineData("http://localhost:2019")]
+    [InlineData("http://LOCALHOST.:8080")]
+    [InlineData("http://admin.localhost:2019")]
+    public void LoopbackNames_AreRefusedWhenPolicyDisallows_WhateverTheResolverSays(string url)
+    {
+        Assert.False(Resolving(NoLoopback).ValidateUpstream(url).Ok, url);
+        Assert.False(Resolving(NoLoopback, "203.0.113.10").ValidateUpstream(url).Ok, url);
+    }
+
+    [Theory]
+    [InlineData("http://127.1:2019")]
+    [InlineData("http://2130706433:2019")]
+    [InlineData("http://0x7f000001:2019")]
+    [InlineData("http://0.0.0.0:2019")]
+    [InlineData("http://[::]:2019")]
+    [InlineData("http://[::1]:2019")]
+    [InlineData("http://[::ffff:127.0.0.1]:2019")]
+    public void LoopbackAddressForms_AreRefusedWhenPolicyDisallows(string url) =>
+        Assert.False(Resolving(NoLoopback).ValidateUpstream(url).Ok, url);
+
+    [Fact]
+    public void ANameResolvingToLoopback_IsRefusedWhenPolicyDisallows()
+    {
+        var check = Resolving(NoLoopback, "127.0.0.1").ValidateUpstream("http://rebind.example.com:2019");
+        Assert.False(check.Ok);
+        Assert.Contains("127.0.0.1", check.Reason);
+    }
+
+    [Theory]
+    [InlineData("169.254.169.254")]
+    [InlineData("fd00:ec2::254")]
+    [InlineData("fe80::1")]
+    public void ANameResolvingToMetadata_IsRefusedUnderTheDefaultPolicy(string address) =>
+        Assert.False(Resolving(new ProxyTargetPolicy(), address).ValidateUpstream("http://meta.example.com").Ok, address);
+
+    [Fact]
+    public void ANameResolvingToAPrivateAddress_IsRefusedWhenPolicyDisallows() =>
+        Assert.False(Resolving(new ProxyTargetPolicy { AllowPrivateNetworks = false }, "10.1.2.3")
+            .ValidateUpstream("https://internal.example.com").Ok);
+
+    [Fact]
+    public void EveryResolvedAddressIsChecked_NotOnlyTheFirst() =>
+        Assert.False(Resolving(NoLoopback, "203.0.113.10", "127.0.0.1").ValidateUpstream("http://two.example.com").Ok);
+
+    [Fact]
+    public void ANameResolvingToAllowedAddresses_IsAccepted() =>
+        Assert.True(Resolving(NoLoopback, "203.0.113.10", "10.0.0.5").ValidateUpstream("http://app.example.com:8080").Ok);
+
+    [Fact]
+    public void ANameThatDoesNotResolve_IsAccepted() =>
+        Assert.True(Resolving(NoLoopback).ValidateUpstream("http://authelia:9091").Ok);
+
+    [Theory]
+    [InlineData("127.0.0.1", false)]
+    [InlineData("0.0.0.0", false)]
+    [InlineData("::1", false)]
+    [InlineData("169.254.169.254", false)]
+    [InlineData("10.0.0.5", true)]
+    [InlineData("203.0.113.10", true)]
+    public void CheckAddress_AppliesThePolicyToOneAddress(string address, bool ok) =>
+        Assert.Equal(ok, new ProxyTargetValidator(NoLoopback).CheckAddress(IPAddress.Parse(address)).Ok);
 
     [Theory]
     [InlineData("example.com", true)]

@@ -12,6 +12,9 @@ namespace SslReverseProxy.Infrastructure.Proxy;
 /// </summary>
 public sealed class UpstreamHealthChecker : IUpstreamHealthChecker
 {
+    /// <summary>The named client; its handler is <see cref="GuardedConnect"/>.</summary>
+    public const string ClientName = "upstream-health";
+
     private readonly IHttpClientFactory _httpFactory;
     private readonly ProxyTargetValidator _validator;
 
@@ -27,7 +30,7 @@ public sealed class UpstreamHealthChecker : IUpstreamHealthChecker
         if (!check.Ok)
             return new UpstreamHealth(false, null, null, check.Reason);
 
-        var client = _httpFactory.CreateClient("upstream-health");
+        var client = _httpFactory.CreateClient(ClientName);
         client.Timeout = TimeSpan.FromSeconds(5);
 
         var sw = Stopwatch.StartNew();
