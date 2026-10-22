@@ -246,7 +246,11 @@ jobs:
             fi
             sleep 1
           done
-          docker logs "$name"
+          # The first run logs the bootstrap admin key under DbBootstrapper: its entries are left out.
+          docker logs "$name" 2>&1 | awk '
+            /^[a-z]+: / { skip = ($0 ~ /^[a-z]+: DbBootstrapper\[/) }
+            /"Category": *"DbBootstrapper"/ || /One-time API key/ { next }
+            !skip { print }'
           exit 1
 
   # The high+ gate for scheduled and manual runs, on the npm registry's advisories
